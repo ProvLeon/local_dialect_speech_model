@@ -1,0 +1,16 @@
+env/
+.ropeproject
+#data/
+*/__pycache__/
+__pycache__/
+model_epoch*
+checkpoint_epoch*
+*report.txt
+*.png
+*_[0-9]*.npy
+models/
+augmented/
+raw/
+notebooks/
+util/
+.env

@@ -1,0 +1,8 @@
+{
+  "input_dim": 39,
+  "num_classes": 20,
+  "preprocessing_info": {
+    "normalization": "global_mean_std",
+    "cleaning": "remove_nan_inf"
+  }
+}
