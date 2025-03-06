@@ -8,7 +8,7 @@ checkpoint_epoch*
 *report.txt
 *.png
 *_[0-9]*.npy
-models/
+data/models/
 augmented/
 raw/
 notebooks/
