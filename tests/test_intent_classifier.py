@@ -5,7 +5,7 @@ import numpy as np
 import os
 import tempfile
 # import json
-from src.models.speech_model import TwiSpeechModel, IntentClassifier
+from src.models.speech_model import EnhancedTwiSpeechModel as TwiSpeechModel, IntentClassifier
 # from src.preprocessing.audio_processor import AudioProcessor
 
 class TestIntentClassifier:
