@@ -213,7 +213,8 @@ def classify_with_enhanced_model(audio_path, classifier_obj):
         features_tensor = preprocess_audio(audio_path, classifier_obj)
 
         # Move tensor to device
-        features_tensor = features_tensor.to(device)
+        if features_tensor is not None:
+            features_tensor = features_tensor.to(device)
 
         # Get model and label map
         model = classifier_obj['model']
@@ -292,15 +293,17 @@ async def health_check():
 
     # Get number of available intents
     num_intents = None
-    if model_type == 'enhanced' and 'label_map' in classifier_obj:
-        num_intents = len(classifier_obj['label_map'])
-    elif model_type == 'standard' and hasattr(classifier_obj, 'label_map'):
-        num_intents = len(classifier_obj.label_map)
+    if model_type == 'enhanced':
+        if hasattr(classifier_obj, 'label_map') or (isinstance(classifier_obj, dict) and 'label_map' in classifier_obj):
+            if hasattr(classifier_obj, 'label_map'):
+                num_intents = len(classifier_obj.label_map)
+            else:
+                num_intents = len(classifier_obj['label_map'])
 
     return HealthResponse(
         status="healthy",
         model_loaded=True,
-        model_type=model_type,
+        model_type=model_type if model_type is not None else "unknown",
         available_intents=num_intents
     )
 
@@ -359,7 +362,7 @@ async def recognize_speech(file: UploadFile = File(...)):
             filename=file.filename or "audio.wav",
             intent=intent,
             confidence=confidence,
-            model_type=model_type,
+            model_type=model_type if model_type is not None else "unknown",
             processing_time_ms=processing_time
         )
 
@@ -484,14 +487,22 @@ async def model_info():
         raise HTTPException(status_code=503, detail="No speech recognition model is loaded")
 
     if model_type == 'enhanced':
-        # Extract model information from enhanced classifier
-        info = {
-            "model_type": "enhanced",
-            "input_dim": classifier_obj.get('input_dim', 'unknown'),
-            "num_classes": len(classifier_obj.get('label_map', {})),
-            "processor_type": classifier_obj.get('processor').__class__.__name__,
-            "feature_type": getattr(classifier_obj.get('processor'), 'feature_type', 'unknown')
-        }
+        if isinstance(classifier_obj, dict):
+            info = {
+                "model_type": "enhanced",
+                "input_dim": classifier_obj.get('input_dim', 'unknown'),
+                "num_classes": len(classifier_obj.get('label_map', {})),
+                "processor_type": classifier_obj.get('processor').__class__.__name__ if classifier_obj.get('processor') else "unknown",
+                "feature_type": getattr(classifier_obj.get('processor', {}), 'feature_type', 'unknown')
+            }
+        else:
+            info = {
+                "model_type": "enhanced",
+                "input_dim": getattr(classifier_obj, 'input_dim', 'unknown'),
+                "num_classes": len(getattr(classifier_obj, 'label_map', {})),
+                "processor_type": getattr(classifier_obj, 'processor', None).__class__.__name__ if getattr(classifier_obj, 'processor', None) else "unknown",
+                "feature_type": getattr(getattr(classifier_obj, 'processor', {}), 'feature_type', 'unknown')
+            }
 
         # Add training information if available
         if 'checkpoint_info' in classifier_obj and classifier_obj['checkpoint_info']:

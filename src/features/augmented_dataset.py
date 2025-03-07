@@ -1,8 +1,9 @@
-import torch
-import numpy as np
+from torch.utils.data import Dataset
+# import numpy as np
 from .feature_augmenter import FeatureAugmenter
 
-class AugmentedTwiDataset(torch.utils.data.Dataset):
+
+class AugmentedTwiDataset(Dataset):
     """
     Enhanced PyTorch dataset for Twi audio commands with augmentation
     """

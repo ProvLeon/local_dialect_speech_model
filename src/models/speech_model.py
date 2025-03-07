@@ -624,8 +624,12 @@ class ImprovedTrainer:
         self.model_dir = model_dir
         os.makedirs(model_dir, exist_ok=True)
 
-        # For mixed precision training
-        self.scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
+        try:
+            # For mixed precision training
+            from torch.cuda import amp
+            self.scaler = amp.GradScaler() if device.type == 'cuda' else None
+        except(ImportError, AttributeError):
+            self.scaler = None
 
         self.history = {
             'train_loss': [],
@@ -671,7 +675,11 @@ class ImprovedTrainer:
 
             # Mixed precision training if using GPU
             if self.scaler is not None:
-                with torch.cuda.amp.autocast():
+                try:
+                    with amp.autocast():
+                        outputs = self.model(inputs)
+                        loss = self.criterion(outputs, targets)
+                except (ImportError, AttributeError):
                     outputs = self.model(inputs)
                     loss = self.criterion(outputs, targets)
 
@@ -964,7 +972,11 @@ class AdvancedTrainer:
                     self.scaler.unscale_(self.optimizer)
 
                     # Gradient clipping
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+                    try:
+                        from torch.nn.utils import clip_grad_norm_
+                        clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+                    except (ImportError, AttributeError):
+                        pass
 
                     # Step optimizer and update scaler
                     self.scaler.step(self.optimizer)

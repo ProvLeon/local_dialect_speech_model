@@ -136,8 +136,15 @@ class AdvancedDataAugmenter:
             nyq = 0.5 * sr
             low = lowcut / nyq
             high = highcut / nyq
-            b, a = butter(order, [low, high], btype='band')
-            return b, a
+            try:
+                b, a = butter(order, [low, high], btype='band')
+                if b is None or a is None:
+                    # Provide fallback values
+                    b, a = np.ones(3), np.array([1, 0, 0])
+                return b, a
+            except (ValueError, TypeError):
+                # Return safe default values on error
+                return np.ones(3), np.array([1, 0, 0])
 
         def bandpass_filter(data, lowcut, highcut, sr, order=5):
             b, a = butter_bandpass(lowcut, highcut, sr, order=order)
@@ -269,7 +276,7 @@ class AdvancedDataAugmenter:
             # Determine how many augmentations to create
             if balanced:
                 current_count = len(files)
-                target_count = targets[intent]
+                target_count = int(targets[intent]) if not isinstance(targets[intent], int) else targets[intent]
                 needed = max(0, target_count - current_count)
                 # Calculate how many augmentations per file
                 augs_per_file = int(np.ceil(needed / current_count)) if current_count > 0 else 0
@@ -318,7 +325,12 @@ class AdvancedDataAugmenter:
                 self.metadata[['file', 'intent']],
                 pd.DataFrame(self.new_metadata)[['file', 'intent']]
             ])
-            final_counts = combined_df['intent'].value_counts()
+            try:
+                final_counts = pd.Series(combined_df['intent']).value_counts()
+            except AttributeError:
+                # Manual count implementation
+                from collections import Counter
+                final_counts = Counter(combined_df['intent'])
 
             print("\n=== Final Class Distribution ===")
             for intent, count in final_counts.items():

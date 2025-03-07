@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt  # Add this import at the top of the file
 from src.models.speech_model import EnhancedTwiSpeechModel, AdvancedTrainer
 from src.features.augmented_dataset import AugmentedTwiDataset
 from src.utils.training_pipeline import TrainingPipeline
-from torch.utils.data import DataLoader, random_split, Subset
+from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import train_test_split
 
 # Set up logging
@@ -40,9 +40,13 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
     # Set random seed for reproducibility
     torch.manual_seed(config['random_seed'])
     np.random.seed(config['random_seed'])
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(config['random_seed'])
-        torch.backends.cudnn.deterministic = True
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(config['random_seed'])
+            if hasattr(torch, 'backends') and hasattr(torch.backends, 'cudnn'):
+                torch.backends.cudnn.deterministic = True
+    except AttributeError:
+        pass
 
     # 2. Load data using existing pipeline
     pipeline = TrainingPipeline(config)
@@ -261,7 +265,7 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
         # Plot and save confusion matrix
         plt.figure(figsize=(12, 10))
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-        disp.plot(cmap=plt.cm.Blues, xticks_rotation=45)
+        disp.plot(cmap=plt.cm.Blues, xticks_rotation='45')
         plt.title('Confusion Matrix')
         plt.tight_layout()
         plt.savefig(os.path.join(model_dir, 'confusion_matrix.png'))
@@ -271,7 +275,7 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
         logger.info(f"Classification Report:\n{report}")
 
         with open(os.path.join(model_dir, 'classification_report.txt'), 'w') as f:
-            f.write(report)
+            f.write(str(report))
 
     except ImportError:
         logger.warning("scikit-learn not installed. Skipping confusion matrix and classification report.")

@@ -170,8 +170,11 @@ def main():
     logger.info("Model loaded successfully!")
     logger.info(f"Model expected input dimension: {expected_input_dim}")
     logger.info("Available intents:")
-    for intent in label_map.keys():
-        logger.info(f"- {intent}")
+    if label_map is not None:
+        for intent in label_map.keys():
+            logger.info(f"- {intent}")
+    else:
+        logger.info("No label map available")
 
     while True:
         try:

@@ -5,6 +5,7 @@ import os
 import torch
 from tqdm import tqdm
 import json
+from torch.utils.data import Dataset
 # from ..preprocessing.enhanced_audio_processor import EnhancedAudioProcessor as AudioProcessor
 from ..preprocessing.audio_processor import AudioProcessor
 
@@ -60,15 +61,15 @@ class FeatureExtractor:
         # Save mapping from label to index
         unique_labels = sorted(set(labels))
         label_to_idx = {label: i for i, label in enumerate(unique_labels)}
-        np.save(os.path.join(self.output_dir, 'label_map.npy'), label_to_idx)
-        # with open(os.path.join(self.output_dir, 'label_map.json'), 'w') as f:
-        #     json.dump(label_to_idx, f)
+        # np.save(os.path.join(self.output_dir, 'label_map.npy'), label_to_idx)
+        with open(os.path.join(self.output_dir, 'label_map.json'), 'w') as f:
+            json.dump(label_to_idx, f)
 
         print(f"Feature extraction complete. Saved to {self.output_dir}")
         return dataset, label_to_idx
 
 
-class TwiDataset(torch.utils.data.Dataset):
+class TwiDataset(Dataset):
     """PyTorch dataset for Twi audio commands"""
 
     def __init__(self, features, labels, label_to_idx=None, transform=None):

@@ -76,7 +76,7 @@ class SpeechIntentApp:
         self.intents_text = tk.Text(intents_frame, height=5, wrap=tk.WORD)
         self.intents_text.pack(fill=tk.BOTH)
 
-        if hasattr(self, 'classifier') and self.classifier and hasattr(self.classifier, 'label_map'):
+        if hasattr(self, 'classifier') and self.classifier and hasattr(self.classifier, 'label_map') and self.classifier.label_map is not None:
             intents_str = ", ".join(self.classifier.label_map.keys())
             self.intents_text.insert(tk.END, intents_str)
 
