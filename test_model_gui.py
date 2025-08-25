@@ -3,7 +3,6 @@ import os
 import torch
 import sounddevice as sd
 import soundfile as sf
-import numpy as np
 import tempfile
 import time
 import tkinter as tk
@@ -11,7 +10,6 @@ from tkinter import ttk, messagebox
 import threading
 from src.models.speech_model import IntentClassifier
 from src.preprocessing.enhanced_audio_processor import EnhancedAudioProcessor
-import json
 
 class SpeechIntentApp:
     def __init__(self, root):

@@ -16,3 +16,5 @@ util/
 .env
 .DS_Store
 */.DS_Store
+*DS_Store
+.python-version
