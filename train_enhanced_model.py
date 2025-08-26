@@ -14,6 +14,89 @@ from sklearn.model_selection import train_test_split
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+# ---------------- Slot-aware utilities ----------------
+def slot_collate(batch):
+    """
+    Collate function that supports datasets returning either:
+      (feature_tensor, label_tensor) OR
+      (feature_tensor, label_tensor, slots_dict)
+    Returns:
+      features: (B, C, T)
+      labels:   (B,)
+      slots:    list[dict] length B
+    """
+    import torch
+    features = []
+    labels = []
+    slots_list = []
+    for sample in batch:
+        if len(sample) == 2:
+            feat, lab = sample
+            sl = {}
+        elif len(sample) == 3:
+            feat, lab, sl = sample
+        else:
+            raise ValueError(f"Unexpected sample structure length={len(sample)}")
+        features.append(feat)
+        labels.append(lab)
+        slots_list.append(sl)
+    return torch.stack(features, dim=0), torch.stack(labels, dim=0), slots_list
+
+
+def train_epoch_with_slots(trainer, model, device, loader, epoch, accumulation_steps: int = 1):
+    """
+    Slot-aware training loop (replaces trainer.train_epoch) that:
+      - Accepts batches of (inputs, targets, slots)
+      - Preserves gradient accumulation & optional grad clipping
+      - Records history metrics in trainer.history
+    """
+    import torch
+    model.train()
+    optimizer = trainer.optimizer
+    criterion = trainer.criterion
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    # Ensure history keys exist
+    for k in ['train_loss', 'train_acc', 'learning_rates']:
+        if k not in trainer.history:
+            trainer.history[k] = []
+
+    optimizer.zero_grad(set_to_none=True)
+    for step, (inputs, targets, batch_slots) in enumerate(loader):
+        inputs, targets = inputs.to(device), targets.to(device)
+        outputs = model(inputs)
+        loss = criterion(outputs, targets) / accumulation_steps
+        loss.backward()
+
+        if (step + 1) % accumulation_steps == 0:
+            # Optional gradient clipping
+            clip_val = trainer.config.get('clip_grad_norm') if hasattr(trainer, 'config') else None
+            if clip_val:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
+            optimizer.step()
+            if hasattr(trainer, 'scheduler') and trainer.scheduler is not None:
+                trainer.scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        running_loss += loss.item() * accumulation_steps
+        _, predicted = outputs.max(1)
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+    epoch_loss = running_loss / len(loader)
+    epoch_acc = 100.0 * correct / total if total > 0 else 0.0
+
+    trainer.history['train_loss'].append(epoch_loss)
+    trainer.history['train_acc'].append(epoch_acc)
+    trainer.history['learning_rates'].append(optimizer.param_groups[0]['lr'])
+
+    logging.info(
+        f"[Epoch {epoch+1}] Slot-aware train -> Loss: {epoch_loss:.4f} Acc: {epoch_acc:.2f}%"
+    )
+
+    return epoch_loss, epoch_acc
 
 def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhanced", epochs=100):
     """Train an enhanced model with all the improvements"""
@@ -50,7 +133,7 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
 
     # 2. Load data using existing pipeline
     pipeline = TrainingPipeline(config)
-    features, labels, label_map = pipeline.load_data()
+    features, labels, label_map, slots = pipeline.load_data()
 
     # 3. Create dataset with augmentation
     augmented_dataset = AugmentedTwiDataset(
@@ -90,21 +173,24 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
         batch_size=config['batch_size'],
         shuffle=True,
         num_workers=4,
-        pin_memory=True if torch.cuda.is_available() else False
+        pin_memory=True if torch.cuda.is_available() else False,
+        collate_fn=slot_collate
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=config['batch_size'],
         shuffle=False,
-        num_workers=2
+        num_workers=2,
+        collate_fn=slot_collate
     )
 
     test_loader = DataLoader(
         test_dataset,
         batch_size=config['batch_size'],
         shuffle=False,
-        num_workers=2
+        num_workers=2,
+        collate_fn=slot_collate
     )
 
     # Update steps per epoch for scheduler
@@ -145,15 +231,22 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
     patience_counter = 0
 
     for epoch in range(config['num_epochs']):
-        # Train one epoch
-        train_loss, train_acc = trainer.train_epoch(train_loader, epoch)
+        # Train one epoch (slot-aware)
+        train_loss, train_acc = train_epoch_with_slots(
+            trainer,
+            model,
+            device,
+            train_loader,
+            epoch,
+            config.get('accumulation_steps', 1)
+        )
 
         # Evaluate on validation set
         model.eval()
         val_loss, val_correct, val_total = 0, 0, 0
 
         with torch.no_grad():
-            for inputs, targets in val_loader:
+            for inputs, targets, _slots in val_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
                 outputs = model(inputs)
                 loss = trainer.criterion(outputs, targets)
@@ -232,7 +325,7 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
     all_preds, all_targets = [], []
 
     with torch.no_grad():
-        for inputs, targets in test_loader:
+        for inputs, targets, _slots in test_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             loss = trainer.criterion(outputs, targets)

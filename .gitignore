@@ -18,3 +18,8 @@ util/
 */.DS_Store
 *DS_Store
 .python-version
+*.npy
+*processed*
+*.zip
+recordings*
+raw_backup*

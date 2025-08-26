@@ -1,16 +1,16 @@
 section_id,section_title,section_description,id,type,text,meaning,intent
 Nav,Simple Navigation,Short commands to move around the app.,Nav_1,scripted,Bue app no,Open the app,
-Nav,Simple Navigation,Short commands to move around the app.,Nav_2,scripted,Kɔ fie,Go to home,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_2,scripted,Kɔ fie,Go to home,go_home
 Nav,Simple Navigation,Short commands to move around the app.,Nav_3,scripted,San w'akyi,Go back,go_back
 Nav,Simple Navigation,Short commands to move around the app.,Nav_4,scripted,Kɔ w'anim,Go forward/Next,continue
 Nav,Simple Navigation,Short commands to move around the app.,Nav_5,scripted,Kɔ soro,Scroll up,
 Nav,Simple Navigation,Short commands to move around the app.,Nav_6,scripted,Kɔ fam,Scroll down,
 Nav,Simple Navigation,Short commands to move around the app.,Nav_7,scripted,Kɔ cart no mu,Go to cart,show_cart
 Nav,Simple Navigation,Short commands to move around the app.,Nav_8,scripted,Kɔ me account,Go to my account,
-Nav,Simple Navigation,Short commands to move around the app.,Nav_9,scripted,Kɔ me orders,Go to my orders,
-Nav,Simple Navigation,Short commands to move around the app.,Nav_10,scripted,Kɔ wishlist no mu,Go to wishlist,
-Nav,Simple Navigation,Short commands to move around the app.,Nav_11,scripted,Kɔ home,Go to home,
-Nav,Simple Navigation,Short commands to move around the app.,Nav_12,scripted,Kɔ homepage,Go to home,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_9,scripted,Kɔ me orders,Go to my orders,orders
+Nav,Simple Navigation,Short commands to move around the app.,Nav_10,scripted,Kɔ wishlist no mu,Go to wishlist,wishlist
+Nav,Simple Navigation,Short commands to move around the app.,Nav_11,scripted,Kɔ home,Go to home,go_home
+Nav,Simple Navigation,Short commands to move around the app.,Nav_12,scripted,Kɔ homepage,Go to home,go_home
 Nav,Simple Navigation,Short commands to move around the app.,Nav_13,scripted,San kɔ,Go back,go_back
 Nav,Simple Navigation,Short commands to move around the app.,Nav_14,scripted,Kɔ w'anim,Go forward/Next,continue
 Nav,Simple Navigation,Short commands to move around the app.,Nav_15,scripted,Kɔ cart,Go to cart,show_cart
@@ -37,25 +37,25 @@ Search,Search and Categories,Simple search and category browsing.,Search_16,scri
 Search,Search and Categories,Simple search and category browsing.,Search_18,scripted,Hwehwɛ accessories,Search for accessories,search
 
 
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_1,scripted,Fa filter fa so,Apply filter,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_2,scripted,Yi filter no,Clear filter,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_3,scripted,Fa boɔ ketewa to so,Set low price,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_4,scripted,Fa boɔ kɛse to so,Set high price,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_5,scripted,Fa rating kɛse to so,Set high rating,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_6,scripted,Sort by price ketewa mu,Sort by lowest price,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_7,scripted,Sort by price kɛse mu,Sort by highest price,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_8,scripted,Sort by popular,Sort by popularity,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_9,scripted,Sort by foforɔ,Sort by newest,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_10,scripted,Fa delivery ntɛm to so,Set fast delivery,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_11,scripted,Hyɛ filter,Apply filter,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_12,scripted,Pepa filter no,Clear filter,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_13,scripted,Fa boɔ ketewa di kan,Sort by lowest price,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_14,scripted,Fa boɔ kɛse di kan,Sort by highest price,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_15,scripted,Fa rating kɛse di kan,Sort by highest rating,search
-FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_16,scripted,Fa foforɔ di kan,Sort by newest,search
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_1,scripted,Fa filter fa so,Apply filter,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_2,scripted,Yi filter no,Clear filter,clear_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_3,scripted,Fa boɔ ketewa to so,Set low price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_4,scripted,Fa boɔ kɛse to so,Set high price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_5,scripted,Fa rating kɛse to so,Set high rating,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_6,scripted,Sort by price ketewa mu,Sort by lowest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_7,scripted,Sort by price kɛse mu,Sort by highest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_8,scripted,Sort by popular,Sort by popularity,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_9,scripted,Sort by foforɔ,Sort by newest,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_10,scripted,Fa delivery ntɛm to so,Set fast delivery,fast_delivery
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_11,scripted,Hyɛ filter,Apply filter,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_12,scripted,Pepa filter no,Clear filter,clear_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_13,scripted,Fa boɔ ketewa di kan,Sort by lowest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_14,scripted,Fa boɔ kɛse di kan,Sort by highest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_15,scripted,Fa rating kɛse di kan,Sort by highest rating,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_16,scripted,Fa foforɔ di kan,Sort by newest,set_filter
 
 Product,Product Details,Simple commands on a product page.,Product_1,scripted,Kyerɛ adeɛ yi ho nsɛm,Show product details,show_description
-Product,Product Details,Simple commands on a product page.,Product_2,scripted,Kyerɛ adeɛ no boɔ,Show price,show_price_images
+Product,Product Details,Simple commands on a product page.,Product_2,scripted,Kyerɛ adeɛ no boɔ,Show price,show_price
 Product,Product Details,Simple commands on a product page.,Product_3,scripted,Kyerɛ reviews,Show reviews,show_description
 Product,Product Details,Simple commands on a product page.,Product_4,scripted,Kyerɛ nea ɛte sɛ yei,Show similar items,show_items
 Product,Product Details,Simple commands on a product page.,Product_5,scripted,Fa yei to wishlist,Add this to wishlist,save_for_later

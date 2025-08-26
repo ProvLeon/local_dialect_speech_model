@@ -1,0 +1,61 @@
+Audio Manifest Summary
+==============================
+Total prompts           : 109
+Resolved audio          : 0
+Missing audio           : 109 (100.0%)
+Coverage percentage     : 0.0%
+Prompts w/ duplicates   : 0
+Unique intents          : 49
+
+Missing Prompt IDs (if any):
+  - filter_apply_fast_delivery_1
+  - nav_home_1
+  - nav_home_2
+  - nav_home_3
+  - nav_back_1
+  - nav_back_2
+  - nav_forward_1
+  - nav_cart_1
+  - nav_cart_2
+  - nav_wishlist_1
+  - nav_account_1
+  - nav_account_2
+  - nav_orders_1
+  - search_cat_clothing_1
+  - search_cat_electronics_1
+  - search_cat_shoes_1
+  - search_cat_home_1
+  - search_cat_food_1
+  - search_cat_gifts_1
+  - search_brand_apple_1
+  - search_brand_nike_1
+  - search_brand_adidas_1
+  - search_brand_samsung_1
+  - search_brand_techo_1
+  - search_brand_infinix_1
+  - search_qualifier_new_1
+  - search_qualifier_cheap_1
+  - search_size_large_1
+  - search_size_small_1
+  - filter_apply_generic_1
+  - filter_apply_price_low_1
+  - filter_apply_price_high_1
+  - filter_apply_rating_high_1
+  - filter_clear_1
+  - sort_price_low_1
+  - sort_price_high_1
+  - sort_newest_1
+  - sort_popular_1
+  - sort_rating_high_1
+  - prod_show_desc_1
+  - prod_show_price_1
+  - prod_show_reviews_1
+  - prod_show_similar_1
+  - cart_add_1
+  - cart_add_2
+  - cart_remove_1
+  - cart_remove_2
+  - cart_save_wishlist_1
+  - cart_save_wishlist_2
+  - cart_change_qty_inc_1
+  ... (59 more)

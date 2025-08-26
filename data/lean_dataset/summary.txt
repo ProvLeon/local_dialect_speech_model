@@ -1,0 +1,171 @@
+Lean Prompts Dataset Build Summary
+========================================
+Prompts file        : prompts_lean.csv
+Output directory    : data/lean_dataset
+Audio root          : data/raw
+Audio extension     : .wav
+
+Intents (count)     : 49
+
+Intent Index Mapping:
+  00 -> add_address
+  01 -> add_to_cart
+  02 -> apply_coupon
+  03 -> apply_filter
+  04 -> cancel_order
+  05 -> change_color
+  06 -> change_quantity
+  07 -> change_size
+  08 -> checkout
+  09 -> clear_cart
+  10 -> clear_filter
+  11 -> confirm_order
+  12 -> continue
+  13 -> disable_order_updates
+  14 -> disable_price_alert
+  15 -> enable_order_updates
+  16 -> enable_price_alert
+  17 -> exchange_item
+  18 -> go_back
+  19 -> go_home
+  20 -> help
+  21 -> make_payment
+  22 -> open_account
+  23 -> open_orders
+  24 -> open_wishlist
+  25 -> order_not_arrived
+  26 -> refund_status
+  27 -> remove_address
+  28 -> remove_coupon
+  29 -> remove_from_cart
+  30 -> return_item
+  31 -> save_for_later
+  32 -> search
+  33 -> select_color
+  34 -> select_size
+  35 -> set_default_address
+  36 -> set_quantity
+  37 -> show_addresses
+  38 -> show_cart
+  39 -> show_description
+  40 -> show_faqs
+  41 -> show_order_status
+  42 -> show_orders
+  43 -> show_price
+  44 -> show_reviews
+  45 -> show_similar_items
+  46 -> sort_items
+  47 -> start_live_chat
+  48 -> track_order
+
+Raw Class Distribution:
+  add_address: 2
+  add_to_cart: 2
+  apply_coupon: 1
+  apply_filter: 5
+  cancel_order: 2
+  change_color: 1
+  change_quantity: 5
+  change_size: 1
+  checkout: 2
+  clear_cart: 2
+  clear_filter: 1
+  confirm_order: 1
+  continue: 1
+  disable_order_updates: 1
+  disable_price_alert: 1
+  enable_order_updates: 1
+  enable_price_alert: 1
+  exchange_item: 1
+  go_back: 2
+  go_home: 3
+  help: 2
+  make_payment: 5
+  open_account: 2
+  open_orders: 1
+  open_wishlist: 1
+  order_not_arrived: 1
+  refund_status: 1
+  remove_address: 1
+  remove_coupon: 1
+  remove_from_cart: 2
+  return_item: 1
+  save_for_later: 2
+  search: 19
+  select_color: 3
+  select_size: 5
+  set_default_address: 1
+  set_quantity: 2
+  show_addresses: 1
+  show_cart: 2
+  show_description: 4
+  show_faqs: 1
+  show_order_status: 1
+  show_orders: 2
+  show_price: 1
+  show_reviews: 1
+  show_similar_items: 2
+  sort_items: 5
+  start_live_chat: 2
+  track_order: 1
+
+Balancing Suggestions (strategy=ceil_min):
+  add_address: current=2 target=40 deficit=38 oversample_factor=20.0
+  add_to_cart: current=2 target=40 deficit=38 oversample_factor=20.0
+  apply_coupon: current=1 target=40 deficit=39 oversample_factor=40.0
+  apply_filter: current=5 target=40 deficit=35 oversample_factor=8.0
+  cancel_order: current=2 target=40 deficit=38 oversample_factor=20.0
+  change_color: current=1 target=40 deficit=39 oversample_factor=40.0
+  change_quantity: current=5 target=40 deficit=35 oversample_factor=8.0
+  change_size: current=1 target=40 deficit=39 oversample_factor=40.0
+  checkout: current=2 target=40 deficit=38 oversample_factor=20.0
+  clear_cart: current=2 target=40 deficit=38 oversample_factor=20.0
+  clear_filter: current=1 target=40 deficit=39 oversample_factor=40.0
+  confirm_order: current=1 target=40 deficit=39 oversample_factor=40.0
+  continue: current=1 target=40 deficit=39 oversample_factor=40.0
+  disable_order_updates: current=1 target=40 deficit=39 oversample_factor=40.0
+  disable_price_alert: current=1 target=40 deficit=39 oversample_factor=40.0
+  enable_order_updates: current=1 target=40 deficit=39 oversample_factor=40.0
+  enable_price_alert: current=1 target=40 deficit=39 oversample_factor=40.0
+  exchange_item: current=1 target=40 deficit=39 oversample_factor=40.0
+  go_back: current=2 target=40 deficit=38 oversample_factor=20.0
+  go_home: current=3 target=40 deficit=37 oversample_factor=13.33
+  help: current=2 target=40 deficit=38 oversample_factor=20.0
+  make_payment: current=5 target=40 deficit=35 oversample_factor=8.0
+  open_account: current=2 target=40 deficit=38 oversample_factor=20.0
+  open_orders: current=1 target=40 deficit=39 oversample_factor=40.0
+  open_wishlist: current=1 target=40 deficit=39 oversample_factor=40.0
+  order_not_arrived: current=1 target=40 deficit=39 oversample_factor=40.0
+  refund_status: current=1 target=40 deficit=39 oversample_factor=40.0
+  remove_address: current=1 target=40 deficit=39 oversample_factor=40.0
+  remove_coupon: current=1 target=40 deficit=39 oversample_factor=40.0
+  remove_from_cart: current=2 target=40 deficit=38 oversample_factor=20.0
+  return_item: current=1 target=40 deficit=39 oversample_factor=40.0
+  save_for_later: current=2 target=40 deficit=38 oversample_factor=20.0
+  search: current=19 target=40 deficit=21 oversample_factor=2.11
+  select_color: current=3 target=40 deficit=37 oversample_factor=13.33
+  select_size: current=5 target=40 deficit=35 oversample_factor=8.0
+  set_default_address: current=1 target=40 deficit=39 oversample_factor=40.0
+  set_quantity: current=2 target=40 deficit=38 oversample_factor=20.0
+  show_addresses: current=1 target=40 deficit=39 oversample_factor=40.0
+  show_cart: current=2 target=40 deficit=38 oversample_factor=20.0
+  show_description: current=4 target=40 deficit=36 oversample_factor=10.0
+  show_faqs: current=1 target=40 deficit=39 oversample_factor=40.0
+  show_order_status: current=1 target=40 deficit=39 oversample_factor=40.0
+  show_orders: current=2 target=40 deficit=38 oversample_factor=20.0
+  show_price: current=1 target=40 deficit=39 oversample_factor=40.0
+  show_reviews: current=1 target=40 deficit=39 oversample_factor=40.0
+  show_similar_items: current=2 target=40 deficit=38 oversample_factor=20.0
+  sort_items: current=5 target=40 deficit=35 oversample_factor=8.0
+  start_live_chat: current=2 target=40 deficit=38 oversample_factor=20.0
+  track_order: current=1 target=40 deficit=39 oversample_factor=40.0
+
+Manifest records    : 109
+Missing audio files : 109
+
+Next Steps:
+  1. Record / collect audio for missing IDs and low-count intents.
+  2. Re-run this builder or create incremental feature extraction pipeline.
+  3. Extract features (MFCC/combined) using updated feature extractor aware of canonical_intent.
+  4. Train model with new label_map.json and ensure slots leveraged at inference.
+  5. Monitor per-class F1; merge or augment classes with chronic low performance.

@@ -1,0 +1,174 @@
+id,text,canonical_intent,slot_type,slot_value,notes
+Nav_1,Bue app no,open_app,,,"Open the app"
+Nav_2,Kɔ fie,go_home,,,
+Nav_3,San w'akyi,go_back,,,
+Nav_4,Kɔ w'anim,continue,,,"Next / forward"
+Nav_5,Kɔ soro,scroll_up,,,
+Nav_6,Kɔ fam,scroll_down,,,
+Nav_7,Kɔ cart no mu,show_cart,,,
+Nav_8,Kɔ me account,open_account,,,
+Nav_9,Kɔ me orders,open_orders,,,
+Nav_10,Kɔ wishlist no mu,open_wishlist,,,
+Nav_11,Kɔ home,go_home,,,"Variant of go_home"
+Nav_12,Kɔ homepage,go_home,,,"Variant of go_home"
+Nav_13,San kɔ,go_back,,,"Variant phrasing"
+Nav_14,Kɔ w'anim,continue,,,"Duplicate forward variant"
+Nav_15,Kɔ cart,show_cart,,,"Variant of show_cart"
+Nav_16,Kɔ shopping cart,show_cart,,,"Variant of show_cart"
+Nav_17,Kɔ me akawnt,open_account,,,"Alternate spelling"
+Nav_18,Kɔ me akawnt no mu,open_account,,,"Alternate spelling"
+
+Search_1,Hwehwɛ ntadeɛ,search,category,clothing,
+Search_2,Hwehwɛ mfidie,search,category,electronics,
+Search_3,Hwehwɛ mpaboa,search,category,shoes,
+Search_4,Hwehwɛ fie nnoɔma,search,category,home_items,
+Search_5,Hwehwɛ nnuane,search,category,groceries,
+Search_6,Hwehwɛ nkitahodie,search,category,accessories,
+Search_7,Hwehwɛ adeɛ a ɛyɛ cheap,search,qualifier,cheap,
+Search_8,Hwehwɛ adeɛ foforɔ,search,qualifier,new,
+Search_9,Hwehwɛ adeɛ kɛse,search,size,large,
+Search_10,Hwehwɛ adeɛ ketewa,search,size,small,
+Search_11,Hwehwɛ ntoma,search,category,textiles,
+Search_12,Hwehwɛ electronics,search,category,electronics,"English loan"
+Search_13,Hwehwɛ ataadeɛ,search,category,clothing,"Synonym"
+Search_14,Hwehwɛ efie adeɛ,search,category,home_items,"Variant"
+Search_15,Hwehwɛ aduane,search,category,groceries,"Variant"
+Search_16,Hwehwɛ akyɛdeɛ,search,category,gifts,
+Search_18,Hwehwɛ accessories,search,category,accessories,"English loan"
+
+FilterSort_1,Fa filter fa so,apply_filter,,,
+FilterSort_2,Yi filter no,clear_filter,,,
+FilterSort_3,Fa boɔ ketewa to so,apply_filter,price_range,low,"Price low threshold"
+FilterSort_4,Fa boɔ kɛse to so,apply_filter,price_range,high,"Price high threshold"
+FilterSort_5,Fa rating kɛse to so,apply_filter,rating,high,
+FilterSort_6,Sort by price ketewa mu,sort_items,sort_key,price_asc,
+FilterSort_7,Sort by price kɛse mu,sort_items,sort_key,price_desc,
+FilterSort_8,Sort by popular,sort_items,sort_key,popular,
+FilterSort_9,Sort by foforɔ,sort_items,sort_key,newest,
+FilterSort_10,Fa delivery ntɛm to so,fast_delivery,,,
+FilterSort_11,Hyɛ filter,apply_filter,,,"Apply filter variant"
+FilterSort_12,Pepa filter no,clear_filter,,,"Clear filter variant"
+FilterSort_13,Fa boɔ ketewa di kan,sort_items,sort_key,price_asc,"Sort phrasing"
+FilterSort_14,Fa boɔ kɛse di kan,sort_items,sort_key,price_desc,"Sort phrasing"
+FilterSort_15,Fa rating kɛse di kan,sort_items,sort_key,rating_desc,
+FilterSort_16,Fa foforɔ di kan,sort_items,sort_key,newest,"Sort newest variant"
+
+Product_1,Kyerɛ adeɛ yi ho nsɛm,show_description,,,
+Product_2,Kyerɛ adeɛ no boɔ,show_price,,,
+Product_3,Kyerɛ reviews,show_reviews,,,
+Product_4,Kyerɛ nea ɛte sɛ yei,show_similar_items,,,
+Product_5,Fa yei to wishlist,save_for_later,,,
+Product_6,Fa yei to cart,add_to_cart,,,
+Product_7,Yi yei firi cart no mu,remove_from_cart,,,
+Product_8,Fa baako ka ho,change_quantity,delta,+1,
+Product_9,Yi baako,change_quantity,delta,-1,
+Product_10,Pepa cart no,clear_cart,,,
+Product_11,Fa yei ka me wishlist,save_for_later,,,"Wishlist variant"
+Product_12,Fa yei ka me cart,add_to_cart,,,"Add variant"
+Product_13,Yi yei firi me cart,remove_from_cart,,,"Remove variant"
+Product_14,Fa baako bio,change_quantity,delta,+1,"Add another variant"
+Product_15,Yi baako pɛ,change_quantity,delta,-1,"Remove one variant"
+Product_16,Pepa me cart no,clear_cart,,,"Clear cart variant"
+
+Cart_1,Hwɛ me cart,show_cart,,,
+Cart_2,Fa me kɔ checkout,checkout,,,
+Cart_3,Sesa me address,change_address,,,
+Cart_4,Fa me kɔ payment,checkout_stage,stage,payment,"Could map to checkout sub-stage"
+Cart_5,Fa Mobile Money,select_payment_method,payment_method,mobile_money,
+Cart_6,Fa card,select_payment_method,payment_method,card,
+Cart_7,Tua ka,make_payment,,,
+Cart_8,Gyae checkout no,cancel_checkout,,,
+Cart_9,San kɔ cart no,show_cart,,,"Return to cart"
+Cart_10,Fa me kɔ delivery options,open_delivery_options,,,
+Cart_11,Kɔ checkout,checkout,,,"Variant"
+Cart_12,Fa MoMo,select_payment_method,payment_method,mobile_money,"Abbrev Mobile Money"
+Cart_13,Fa bank card,select_payment_method,payment_method,card,
+Cart_14,Tua seesei,make_payment,,,"Now variant"
+Cart_15,Gyae checkout,cancel_checkout,,,"Variant"
+Cart_16,Kɔ delivery options no,open_delivery_options,,,"Variant"
+
+Orders_1,Kyerɛ me orders,show_orders,,,
+Orders_2,Kyerɛ me order status,show_order_status,,,
+Orders_3,Trake me order no,track_order,,,
+Orders_4,Twa order no mu,cancel_order,,,
+Orders_5,Me nsa nka me nnoɔma no,order_not_arrived,,,
+Orders_6,Mepɛ sɛ mesan de adeɛ no ba,return_item,,,
+Orders_7,Mepɛ sɛ mesesa adeɛ no,exchange_item,,,
+Orders_8,Dɛn ne me refund status?,refund_status,,,
+Orders_9,Kenkan order details no,show_description,context,order_details,
+Orders_10,Kyerɛ me receipt no,show_description,context,receipt,
+Orders_11,Hwɛ me orders,show_orders,,,"Variant"
+Orders_12,Kyerɛ me order status,show_order_status,,,"Variant"
+Orders_13,Trake me order no,track_order,,,"Variant"
+Orders_14,Twa me order no mu,cancel_order,,,"Variant"
+Orders_15,Me nsa nka nnoɔma no,order_not_arrived,,,"Variant wording"
+Orders_16,Me refund no tebea te sɛn,refund_status,,,"Variant wording"
+
+Account_1,Kɔ me profile,open_account,section,profile,
+Account_2,Sesa me password,change_password,,,
+Account_3,Sesa me address no,change_address,,,
+Account_4,Kyerɛ me notifications,show_notifications,,,
+Account_5,Frɛ mmoafoɔ,help,channel,phone_support,
+Account_6,Boa me,help,,,
+Account_7,Kenkan page yi,read_page,,,
+Account_8,Ma kasa no so,increase_volume,,,
+Account_9,Brɛ wo kasa no,slow_speech,,,
+Account_10,Fi mu koraa,logout_all,,,
+Account_11,Kɔ me profile no,open_account,section,profile,"Variant"
+Account_12,Sesa me address,change_address,,,"Variant"
+Account_13,Fi account no mu,logout,,,
+Account_14,Sɔ mmoa,help,channel,general_help,"Open help"
+
+Deals_1,Hwɛ deals,search,qualifier,deals,
+Deals_2,Hwɛ discounts,search,qualifier,discounts,
+Deals_3,Fa coupon to so,apply_coupon,,,
+Deals_4,Yi coupon no,remove_coupon,,,
+Deals_5,Hwɛ flash sale,search,qualifier,flash_sale,
+Deals_6,Hwɛ free delivery,search,qualifier,free_delivery,
+Deals_7,Hwɛ promo,search,qualifier,promotions,
+Deals_8,Fa voucher to so,apply_voucher,,,
+Deals_9,Yi voucher no,remove_voucher,,,
+Deals_10,Hwɛ free shipping,search,qualifier,free_shipping,
+
+Brand_1,Hwehwɛ brand Samsung,search,brand,Samsung,
+Brand_2,Hwehwɛ brand Apple,search,brand,Apple,
+Brand_3,Hwehwɛ brand Nike,search,brand,Nike,
+Brand_4,Hwehwɛ brand Adidas,search,brand,Adidas,
+Brand_5,Hwehwɛ brand Tecno,search,brand,Tecno,
+Brand_6,Hwehwɛ brand Infinix,search,brand,Infinix,
+Brand_7,Hwehwɛ Samsung,search,brand,Samsung,"Brand direct"
+Brand_8,Hwehwɛ Apple,search,brand,Apple,"Brand direct"
+Brand_9,Hwehwɛ Nike,search,brand,Nike,"Brand direct"
+Brand_10,Hwehwɛ Adidas,search,brand,Adidas,"Brand direct"
+
+Attributes_1,Fa color tuntum,select_color,color,black,
+Attributes_2,Fa color fitaa,select_color,color,white,
+Attributes_3,Fa size kɛse,select_size,size,large,
+Attributes_4,Fa size ketewa,select_size,size,small,
+Attributes_5,Sesa color no,change_color,,,
+Attributes_6,Sesa size no,change_size,,,
+Attributes_7,Fa size medium,select_size,size,medium,
+Attributes_8,Fa size extra large,select_size,size,xlarge,
+Attributes_9,Fa size extra small,select_size,size,xsmall,
+Attributes_10,Fa color anyɛ den,select_color,color,light,"Light color preference"
+
+Address_1,Kyerɛ me addresses,show_addresses,,,
+Address_2,Fa address foforɔ ka ho,add_address,,,
+Address_3,Yi address no,remove_address,,,
+Address_4,Fa default address,set_default_address,,,
+Address_5,Fa address foforɔ ka ho,add_address,,,"Variant add"
+Address_6,Yi default address no,remove_default_address,,,
+
+Notify_1,Sɔ order updates,enable_order_updates,,,
+Notify_2,Gyae order updates,disable_order_updates,,,
+Notify_3,Sɔ price alert,enable_price_alert,,,
+Notify_4,Gyae price alert,disable_price_alert,,,
+Notify_5,Sɔ order alerts,enable_order_updates,,,"Variant"
+Notify_6,Gyae price alerts,disable_price_alert,,,"Plural variant"
+
+Support_1,Frɛ live chat,start_live_chat,,,
+Support_2,Bue ticket,open_ticket,,,
+Support_3,Fa foto kɔ support,upload_support_image,,,
+Support_4,Kyerɛ FAQs,show_faqs,,,
+Support_5,Kɔ live chat,start_live_chat,,,"Variant"
+Support_6,Fa video kɔ support,upload_support_video,,,

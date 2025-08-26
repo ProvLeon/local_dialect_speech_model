@@ -1,0 +1,175 @@
+section_id,section_title,section_description,id,type,text,meaning,intent
+Nav,Simple Navigation,Short commands to move around the app.,Nav_1,scripted,Bue app no,Open the app,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_2,scripted,Kɔ fie,Go to home,go_home
+Nav,Simple Navigation,Short commands to move around the app.,Nav_3,scripted,San w'akyi,Go back,go_back
+Nav,Simple Navigation,Short commands to move around the app.,Nav_4,scripted,Kɔ w'anim,Go forward/Next,continue
+Nav,Simple Navigation,Short commands to move around the app.,Nav_5,scripted,Kɔ soro,Scroll up,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_6,scripted,Kɔ fam,Scroll down,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_7,scripted,Kɔ cart no mu,Go to cart,show_cart
+Nav,Simple Navigation,Short commands to move around the app.,Nav_8,scripted,Kɔ me account,Go to my account,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_9,scripted,Kɔ me orders,Go to my orders,orders
+Nav,Simple Navigation,Short commands to move around the app.,Nav_10,scripted,Kɔ wishlist no mu,Go to wishlist,wishlist
+Nav,Simple Navigation,Short commands to move around the app.,Nav_11,scripted,Kɔ home,Go to home,go_home
+Nav,Simple Navigation,Short commands to move around the app.,Nav_12,scripted,Kɔ homepage,Go to home,go_home
+Nav,Simple Navigation,Short commands to move around the app.,Nav_13,scripted,San kɔ,Go back,go_back
+Nav,Simple Navigation,Short commands to move around the app.,Nav_14,scripted,Kɔ w'anim,Go forward/Next,continue
+Nav,Simple Navigation,Short commands to move around the app.,Nav_15,scripted,Kɔ cart,Go to cart,show_cart
+Nav,Simple Navigation,Short commands to move around the app.,Nav_16,scripted,Kɔ shopping cart,Go to cart,show_cart
+Nav,Simple Navigation,Short commands to move around the app.,Nav_17,scripted,Kɔ me akawnt,Go to my account,
+Nav,Simple Navigation,Short commands to move around the app.,Nav_18,scripted,Kɔ me akawnt no mu,Go to my account,
+
+Search,Search and Categories,Simple search and category browsing.,Search_1,scripted,Hwehwɛ ntadeɛ,Search for clothing,search
+Search,Search and Categories,Simple search and category browsing.,Search_2,scripted,Hwehwɛ mfidie,Search for electronics,search
+Search,Search and Categories,Simple search and category browsing.,Search_3,scripted,Hwehwɛ mpaboa,Search for shoes,search
+Search,Search and Categories,Simple search and category browsing.,Search_4,scripted,Hwehwɛ fie nnoɔma,Search for home items,search
+Search,Search and Categories,Simple search and category browsing.,Search_5,scripted,Hwehwɛ nnuane,Search for groceries,search
+Search,Search and Categories,Simple search and category browsing.,Search_6,scripted,Hwehwɛ nkitahodie,Search for accessories,search
+Search,Search and Categories,Simple search and category browsing.,Search_7,scripted,Hwehwɛ adeɛ a ɛyɛ cheap,Search for cheaper items,search
+Search,Search and Categories,Simple search and category browsing.,Search_8,scripted,Hwehwɛ adeɛ foforɔ,Search for new items,search
+Search,Search and Categories,Simple search and category browsing.,Search_9,scripted,Hwehwɛ adeɛ kɛse,Search for large size,search
+Search,Search and Categories,Simple search and category browsing.,Search_10,scripted,Hwehwɛ adeɛ ketewa,Search for small size,search
+Search,Search and Categories,Simple search and category browsing.,Search_11,scripted,Hwehwɛ ntoma,Search for clothing,search
+Search,Search and Categories,Simple search and category browsing.,Search_12,scripted,Hwehwɛ electronics,Search for electronics,search
+Search,Search and Categories,Simple search and category browsing.,Search_13,scripted,Hwehwɛ ataadeɛ,Search for clothing,search
+Search,Search and Categories,Simple search and category browsing.,Search_14,scripted,Hwehwɛ efie adeɛ,Search for home items,search
+Search,Search and Categories,Simple search and category browsing.,Search_15,scripted,Hwehwɛ aduane,Search for groceries,search
+Search,Search and Categories,Simple search and category browsing.,Search_16,scripted,Hwehwɛ akyɛdeɛ,Search for gifts,search
+Search,Search and Categories,Simple search and category browsing.,Search_18,scripted,Hwehwɛ accessories,Search for accessories,search
+
+
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_1,scripted,Fa filter fa so,Apply filter,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_2,scripted,Yi filter no,Clear filter,clear_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_3,scripted,Fa boɔ ketewa to so,Set low price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_4,scripted,Fa boɔ kɛse to so,Set high price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_5,scripted,Fa rating kɛse to so,Set high rating,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_6,scripted,Sort by price ketewa mu,Sort by lowest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_7,scripted,Sort by price kɛse mu,Sort by highest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_8,scripted,Sort by popular,Sort by popularity,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_9,scripted,Sort by foforɔ,Sort by newest,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_10,scripted,Fa delivery ntɛm to so,Set fast delivery,fast_delivery
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_11,scripted,Hyɛ filter,Apply filter,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_12,scripted,Pepa filter no,Clear filter,clear_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_13,scripted,Fa boɔ ketewa di kan,Sort by lowest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_14,scripted,Fa boɔ kɛse di kan,Sort by highest price,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_15,scripted,Fa rating kɛse di kan,Sort by highest rating,set_filter
+FilterSort,Filter and Sort,Quick filter and sort actions.,FilterSort_16,scripted,Fa foforɔ di kan,Sort by newest,set_filter
+
+Product,Product Details,Simple commands on a product page.,Product_1,scripted,Kyerɛ adeɛ yi ho nsɛm,Show product details,show_description
+Product,Product Details,Simple commands on a product page.,Product_2,scripted,Kyerɛ adeɛ no boɔ,Show price,show_price
+Product,Product Details,Simple commands on a product page.,Product_3,scripted,Kyerɛ reviews,Show reviews,show_description
+Product,Product Details,Simple commands on a product page.,Product_4,scripted,Kyerɛ nea ɛte sɛ yei,Show similar items,show_items
+Product,Product Details,Simple commands on a product page.,Product_5,scripted,Fa yei to wishlist,Add this to wishlist,save_for_later
+Product,Product Details,Simple commands on a product page.,Product_6,scripted,Fa yei to cart,Add this to cart,add_to_cart
+Product,Product Details,Simple commands on a product page.,Product_7,scripted,Yi yei firi cart no mu,Remove this from cart,remove_from_cart
+Product,Product Details,Simple commands on a product page.,Product_8,scripted,Fa baako ka ho,Add one more,change_quantity
+Product,Product Details,Simple commands on a product page.,Product_9,scripted,Yi baako,Remove one,change_quantity
+Product,Product Details,Simple commands on a product page.,Product_10,scripted,Pepa cart no,Clear the cart,remove_from_cart
+Product,Product Details,Simple commands on a product page.,Product_11,scripted,Fa yei ka me wishlist,Add this to wishlist,save_for_later
+Product,Product Details,Simple commands on a product page.,Product_12,scripted,Fa yei ka me cart,Add this to cart,add_to_cart
+Product,Product Details,Simple commands on a product page.,Product_13,scripted,Yi yei firi me cart,Remove this from cart,remove_from_cart
+Product,Product Details,Simple commands on a product page.,Product_14,scripted,Fa baako bio,Add one more,change_quantity
+Product,Product Details,Simple commands on a product page.,Product_15,scripted,Yi baako pɛ,Remove one,change_quantity
+Product,Product Details,Simple commands on a product page.,Product_16,scripted,Pepa me cart no,Clear the cart,remove_from_cart
+
+Cart,Cart and Checkout,Actions from the cart.,Cart_1,scripted,Hwɛ me cart,View my cart,show_cart
+Cart,Cart and Checkout,Actions from the cart.,Cart_2,scripted,Fa me kɔ checkout,Proceed to checkout,checkout
+Cart,Cart and Checkout,Actions from the cart.,Cart_3,scripted,Sesa me address,Change my address,
+Cart,Cart and Checkout,Actions from the cart.,Cart_4,scripted,Fa me kɔ payment,Go to payment,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_5,scripted,Fa Mobile Money,Select Mobile Money,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_6,scripted,Fa card,Select card,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_7,scripted,Tua ka,Pay now,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_8,scripted,Gyae checkout no,Cancel checkout,cancel
+Cart,Cart and Checkout,Actions from the cart.,Cart_9,scripted,San kɔ cart no,Go back to cart,show_cart
+Cart,Cart and Checkout,Actions from the cart.,Cart_10,scripted,Fa me kɔ delivery options,Go to delivery options,
+Cart,Cart and Checkout,Actions from the cart.,Cart_11,scripted,Kɔ checkout,Proceed to checkout,checkout
+Cart,Cart and Checkout,Actions from the cart.,Cart_12,scripted,Fa MoMo,Select Mobile Money,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_13,scripted,Fa bank card,Select card,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_14,scripted,Tua seesei,Pay now,make_payment
+Cart,Cart and Checkout,Actions from the cart.,Cart_15,scripted,Gyae checkout,Cancel checkout,cancel
+Cart,Cart and Checkout,Actions from the cart.,Cart_16,scripted,Kɔ delivery options no,Go to delivery options,
+
+Orders,Orders and Tracking,Common order and return commands.,Orders_1,scripted,Kyerɛ me orders,Show my orders,show_items
+Orders,Orders and Tracking,Common order and return commands.,Orders_2,scripted,Kyerɛ me order status,Show my order status,show_items
+Orders,Orders and Tracking,Common order and return commands.,Orders_3,scripted,Trake me order no,Track my order,show_items
+Orders,Orders and Tracking,Common order and return commands.,Orders_4,scripted,Twa order no mu,Cancel the order,cancel
+Orders,Orders and Tracking,Common order and return commands.,Orders_5,scripted,Me nsa nka me nnoɔma no,My order hasn't arrived,help
+Orders,Orders and Tracking,Common order and return commands.,Orders_6,scripted,Mepɛ sɛ mesan de adeɛ no ba,I want to return the item,cancel
+Orders,Orders and Tracking,Common order and return commands.,Orders_7,scripted,Mepɛ sɛ mesesa adeɛ no,I want to exchange the item,change_order
+Orders,Orders and Tracking,Common order and return commands.,Orders_8,scripted,Dɛn ne me refund status?,What's my refund status?,ask_questions
+Orders,Orders and Tracking,Common order and return commands.,Orders_9,scripted,Kenkan order details no,Read the order details,show_description
+Orders,Orders and Tracking,Common order and return commands.,Orders_10,scripted,Kyerɛ me receipt no,Show me the receipt,show_description
+Orders,Orders and Tracking,Common order and return commands.,Orders_11,scripted,Hwɛ me orders,Show my orders,show_items
+Orders,Orders and Tracking,Common order and return commands.,Orders_12,scripted,Kyerɛ me order status,Show my order status,show_items
+Orders,Orders and Tracking,Common order and return commands.,Orders_13,scripted,Trake me order no,Track my order,show_items
+Orders,Orders and Tracking,Common order and return commands.,Orders_14,scripted,Twa me order no mu,Cancel the order,cancel
+Orders,Orders and Tracking,Common order and return commands.,Orders_15,scripted,Me nsa nka nnoɔma no,My order hasn't arrived,help
+Orders,Orders and Tracking,Common order and return commands.,Orders_16,scripted,Me refund no tebea te sɛn,What's my refund status?,ask_questions
+
+Account,Account and Help,Short account and help actions.,Account_1,scripted,Kɔ me profile,Go to my profile,
+Account,Account and Help,Short account and help actions.,Account_2,scripted,Sesa me password,Change my password,
+Account,Account and Help,Short account and help actions.,Account_3,scripted,Sesa me address no,Update my address,
+Account,Account and Help,Short account and help actions.,Account_4,scripted,Kyerɛ me notifications,Show my notifications,
+Account,Account and Help,Short account and help actions.,Account_5,scripted,Frɛ mmoafoɔ,Call customer support,help
+Account,Account and Help,Short account and help actions.,Account_6,scripted,Boa me,Help me,help
+Account,Account and Help,Short account and help actions.,Account_7,scripted,Kenkan page yi,Read this page,
+Account,Account and Help,Short account and help actions.,Account_8,scripted,Ma kasa no so,Increase volume,
+Account,Account and Help,Short account and help actions.,Account_9,scripted,Brɛ wo kasa no,Speak slower,
+Account,Account and Help,Short account and help actions.,Account_10,scripted,Fi mu koraa,Log out completely,
+Account,Account and Help,Short account and help actions.,Account_11,scripted,Kɔ me profile no,Go to my profile,
+Account,Account and Help,Short account and help actions.,Account_12,scripted,Sesa me address,Update my address,
+Account,Account and Help,Short account and help actions.,Account_13,scripted,Fi account no mu,Log out,
+Account,Account and Help,Short account and help actions.,Account_14,scripted,Sɔ mmoa,Open help,help
+
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_1,scripted,Hwɛ deals,Show deals,search
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_2,scripted,Hwɛ discounts,Show discounts,search
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_3,scripted,Fa coupon to so,Apply coupon,
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_4,scripted,Yi coupon no,Remove coupon,
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_5,scripted,Hwɛ flash sale,Show flash sale,search
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_6,scripted,Hwɛ free delivery,Show free delivery items,search
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_7,scripted,Hwɛ promo,Show promotions,search
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_8,scripted,Fa voucher to so,Apply voucher,
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_9,scripted,Yi voucher no,Remove voucher,
+Deals,Deals and Promotions,Quick access to promotions and savings.,Deals_10,scripted,Hwɛ free shipping,Show free shipping items,search
+
+Brand,Brand Search,Search for specific brands.,Brand_1,scripted,Hwehwɛ brand Samsung,Search brand Samsung,search
+Brand,Brand Search,Search for specific brands.,Brand_2,scripted,Hwehwɛ brand Apple,Search brand Apple,search
+Brand,Brand Search,Search for specific brands.,Brand_3,scripted,Hwehwɛ brand Nike,Search brand Nike,search
+Brand,Brand Search,Search for specific brands.,Brand_4,scripted,Hwehwɛ brand Adidas,Search brand Adidas,search
+Brand,Brand Search,Search for specific brands.,Brand_5,scripted,Hwehwɛ brand Tecno,Search brand Tecno,search
+Brand,Brand Search,Search for specific brands.,Brand_6,scripted,Hwehwɛ brand Infinix,Search brand Infinix,search
+Brand,Brand Search,Search for specific brands.,Brand_7,scripted,Hwehwɛ Samsung,Search Samsung,search
+Brand,Brand Search,Search for specific brands.,Brand_8,scripted,Hwehwɛ Apple,Search Apple,search
+Brand,Brand Search,Search for specific brands.,Brand_9,scripted,Hwehwɛ Nike,Search Nike,search
+Brand,Brand Search,Search for specific brands.,Brand_10,scripted,Hwehwɛ Adidas,Search Adidas,search
+
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_1,scripted,Fa color tuntum,Select black color,select_color
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_2,scripted,Fa color fitaa,Select white color,select_color
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_3,scripted,Fa size kɛse,Select large size,select_size
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_4,scripted,Fa size ketewa,Select small size,select_size
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_5,scripted,Sesa color no,Change the color,change_color
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_6,scripted,Sesa size no,Change the size,change_size
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_7,scripted,Fa size medium,Select medium size,select_size
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_8,scripted,Fa size extra large,Select extra large size,select_size
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_9,scripted,Fa size extra small,Select extra small size,select_size
+Attributes,Colors and Sizes,Pick colors and sizes.,Attributes_10,scripted,Fa color anyɛ den,Select light color,select_color
+
+Address,Address Book,Manage saved addresses.,Address_1,scripted,Kyerɛ me addresses,Show my addresses,
+Address,Address Book,Manage saved addresses.,Address_2,scripted,Fa address foforɔ ka ho,Add a new address,
+Address,Address Book,Manage saved addresses.,Address_3,scripted,Yi address no,Remove the address,
+Address,Address Book,Manage saved addresses.,Address_4,scripted,Fa default address,Select default address,
+Address,Address Book,Manage saved addresses.,Address_5,scripted,Fa address foforɔ ka ho,Add another address,
+Address,Address Book,Manage saved addresses.,Address_6,scripted,Yi default address no,Remove the default address,
+
+Notify,Notifications,Control order and price notifications.,Notify_1,scripted,Sɔ order updates,Turn on order updates,
+Notify,Notifications,Control order and price notifications.,Notify_2,scripted,Gyae order updates,Turn off order updates,
+Notify,Notifications,Control order and price notifications.,Notify_3,scripted,Sɔ price alert,Turn on price alert,
+Notify,Notifications,Control order and price notifications.,Notify_4,scripted,Gyae price alert,Turn off price alert,
+Notify,Notifications,Control order and price notifications.,Notify_5,scripted,Sɔ order alerts,Turn on order alerts,
+Notify,Notifications,Control order and price notifications.,Notify_6,scripted,Gyae price alerts,Turn off price alerts,
+
+Support,Customer Support,Quick customer support actions.,Support_1,scripted,Frɛ live chat,Start live chat,help
+Support,Customer Support,Quick customer support actions.,Support_2,scripted,Bue ticket,Open a support ticket,help
+Support,Customer Support,Quick customer support actions.,Support_3,scripted,Fa foto kɔ support,Upload a photo to support,help
+Support,Customer Support,Quick customer support actions.,Support_4,scripted,Kyerɛ FAQs,Show FAQs,help
+Support,Customer Support,Quick customer support actions.,Support_5,scripted,Kɔ live chat,Go to live chat,help
+Support,Customer Support,Quick customer support actions.,Support_6,scripted,Fa video kɔ support,Upload a video to support,help

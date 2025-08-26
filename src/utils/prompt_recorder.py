@@ -1,0 +1,1287 @@
+#!/usr/bin/env python3
+"""
+Enhanced Prompt Recorder for Akan (Twi) Speech Dataset Collection
+
+This module provides a sophisticated recording system with:
+- Participant-based organization
+- Voice Activity Detection (VAD)
+- Automatic stop detection
+- Interactive prompt management
+- Quality control features
+"""
+
+import os
+import sys
+import argparse
+import json
+import csv
+import time
+import logging
+import threading
+import queue
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
+from pathlib import Path
+
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+from tqdm import tqdm
+
+webrtcvad = None
+try:
+    import webrtcvad  # type: ignore
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    webrtcvad = None
+    WEBRTC_AVAILABLE = False
+    print("Warning: webrtcvad not available. Install with: pip install webrtcvad")
+
+keyboard = None
+try:
+    import keyboard  # type: ignore
+    KEYBOARD_AVAILABLE = True
+except ImportError:
+    keyboard = None
+    KEYBOARD_AVAILABLE = False
+    print("Warning: keyboard not available. Install with: pip install keyboard")
+def _safe_key_pressed(key: str) -> bool:
+    """Wrapper to safely test key presses even if keyboard module missing."""
+    if KEYBOARD_AVAILABLE and keyboard is not None:
+        try:
+            return keyboard.is_pressed(key)
+        except Exception:
+            return False
+    return False
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class VoiceActivityDetector:
+    """Voice Activity Detection using WebRTC VAD"""
+
+    def __init__(self, aggressiveness=2, sample_rate=16000, frame_duration_ms=30):
+        """
+        Initialize VAD
+
+        Args:
+            aggressiveness: VAD aggressiveness level (0-3)
+            sample_rate: Audio sample rate
+            frame_duration_ms: Frame duration in milliseconds
+        """
+        self.aggressiveness = aggressiveness
+        self.sample_rate = sample_rate
+        self.frame_duration_ms = frame_duration_ms
+        self.frame_size = int(sample_rate * frame_duration_ms / 1000)
+
+        # Initialize underlying VAD instance safely
+        self.vad = None
+        if WEBRTC_AVAILABLE:
+            try:
+                self.vad = webrtcvad.Vad()  # type: ignore[attr-defined]
+                self.vad.set_mode(aggressiveness)
+            except Exception as e:
+                logger.warning(f"Failed to initialize WebRTC VAD ({e}); falling back to energy-based detection")
+        else:
+            logger.warning("WebRTC VAD not available, using energy-based detection")
+
+    def is_speech(self, audio_frame):
+        """
+        Detect if audio frame contains speech
+
+        Args:
+            audio_frame: Audio frame as numpy array
+
+        Returns:
+            bool: True if speech detected
+        """
+        if self.vad is None:
+            # Fallback to energy-based detection
+            energy = np.sum(audio_frame ** 2) / len(audio_frame)
+            return energy > 0.001  # Simple energy threshold
+
+        # Ensure frame is correct size
+        if len(audio_frame) != self.frame_size:
+            return False
+
+        # Convert to 16-bit PCM
+        audio_int16 = (audio_frame * 32767).astype(np.int16)
+
+        try:
+            return self.vad.is_speech(audio_int16.tobytes(), self.sample_rate)
+        except Exception as e:
+            logger.warning(f"VAD error: {e}, falling back to energy detection")
+            energy = np.sum(audio_frame ** 2) / len(audio_frame)
+            return energy > 0.001
+
+
+class AudioRecorder:
+    """Enhanced audio recorder with VAD and automatic stopping"""
+
+    def __init__(self, sample_rate=16000, channels=1, vad_aggressiveness=2,
+                 silence_duration_ms=500, auto_stop=True,
+                 trim_silence=True, trim_db_threshold=-40.0, trim_min_silence_ms=120):
+        """
+        Initialize audio recorder
+
+        Args:
+            sample_rate: Audio sample rate
+            channels: Number of audio channels
+            vad_aggressiveness: VAD aggressiveness (0-3)
+            silence_duration_ms: Duration of silence before auto-stop
+            auto_stop: Enable automatic stopping on silence
+            trim_silence: Whether to automatically trim leading/trailing silence before saving
+            trim_db_threshold: dBFS threshold below which audio is considered silence
+            trim_min_silence_ms: Minimum contiguous silence (ms) kept at each edge after trimming
+        """
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.auto_stop = auto_stop
+        self.silence_duration_ms = silence_duration_ms
+        # Alias used elsewhere for clarity (silence_ms referenced in processing / UI)
+        self.silence_ms = silence_duration_ms
+        # Trimming settings
+        self.trim_silence = trim_silence
+        self.trim_db_threshold = trim_db_threshold
+        self.trim_min_silence_ms = trim_min_silence_ms
+
+        # VAD setup
+        self.vad = VoiceActivityDetector(
+            aggressiveness=vad_aggressiveness,
+            sample_rate=sample_rate
+        )
+
+        # Recording state
+        self.recording = False
+        self.audio_queue = queue.Queue()
+        self.recorded_frames = []
+        self.silence_start = None
+        self.speech_detected = False
+
+        # Threading
+        self.record_thread = None
+        self.process_thread = None
+        self.stop_event = threading.Event()
+
+    def audio_callback(self, indata, frames, time, status):
+        """Audio input callback"""
+        if status:
+            logger.warning(f"Audio callback status: {status}")
+
+        if self.recording:
+            self.audio_queue.put(indata.copy())
+
+    def process_audio(self):
+        """Process audio frames for VAD and improved auto-stop (time–based + frame count)."""
+        consecutive_silence_frames = 0
+        silence_frame_target = max(1, int(self.silence_duration_ms / self.vad.frame_duration_ms if hasattr(self.vad, "frame_duration_ms") else self.silence_duration_ms / 30))
+        last_speech_time = None
+
+        while not self.stop_event.is_set():
+            try:
+                frame = self.audio_queue.get(timeout=0.1)
+                if not self.recording:
+                    continue
+
+                self.recorded_frames.append(frame)
+
+                if self.auto_stop and len(frame) > 0:
+                    frame_flat = frame.flatten()
+                    chunk_size = self.vad.frame_size
+                    speech_in_frame = False
+
+                    for i in range(0, len(frame_flat), chunk_size):
+                        chunk = frame_flat[i:i+chunk_size]
+                        if len(chunk) == chunk_size and self.vad.is_speech(chunk):
+                            speech_in_frame = True
+                            break
+
+                    now = time.time()
+                    if speech_in_frame:
+                        self.speech_detected = True
+                        consecutive_silence_frames = 0
+                        last_speech_time = now
+                    else:
+                        if self.speech_detected:
+                            consecutive_silence_frames += 1
+                            # Time–based silence check (more reliable than only frames)
+                            if last_speech_time is not None:
+                                silence_elapsed = (now - last_speech_time) * 1000.0
+                            else:
+                                silence_elapsed = 0
+                            if (consecutive_silence_frames >= silence_frame_target) or (silence_elapsed >= self.silence_ms):
+                                logger.info(f"Auto-stop: Silence detected (frames={consecutive_silence_frames}, ms≈{int(silence_elapsed)})")
+                                self.stop_recording()
+                                break
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error processing audio: {e}")
+
+    def start_recording(self):
+        """Start recording"""
+        if self.recording:
+            return
+
+        logger.info("Starting recording...")
+        self.recording = True
+        self.recorded_frames = []
+        self.speech_detected = False
+        self.silence_start = None
+        self.stop_event.clear()
+
+        # Start audio stream
+        self.stream = sd.InputStream(
+            callback=self.audio_callback,
+            channels=self.channels,
+            samplerate=self.sample_rate,
+            dtype=np.float32,
+            blocksize=self.vad.frame_size  # ensure consistent 30ms frame blocks for VAD
+        )
+        self.stream.start()
+
+        # Start processing thread
+        self.process_thread = threading.Thread(target=self.process_audio)
+        self.process_thread.start()
+
+    def stop_recording(self):
+        """Stop recording (idempotent; safe if called from processing thread)"""
+        # Fast exit if already fully stopped
+        if not self.recording and self.stop_event.is_set():
+            return
+
+        # Prevent re-entrant calls
+        if getattr(self, "_stopping", False):
+            return
+        self._stopping = True
+
+        logger.info("Stopping recording...")
+        self.recording = False
+
+        # Stop stream safely
+        if hasattr(self, 'stream'):
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+
+        # Signal processing loop to exit
+        self.stop_event.set()
+
+        # Only join if we're NOT inside the processing thread
+        if (
+            self.process_thread
+            and self.process_thread.is_alive()
+            and threading.current_thread() is not self.process_thread
+        ):
+            try:
+                self.process_thread.join(timeout=1.0)
+            except Exception:
+                pass
+
+        self._stopping = False
+
+    def get_recording(self):
+        """Get recorded audio as numpy array"""
+        if not self.recorded_frames:
+            return np.array([])
+
+        audio = np.concatenate(self.recorded_frames, axis=0)
+        if self.channels == 1:
+            audio = audio.flatten()
+
+        return audio
+
+    def save_recording(self, filepath, audio_data=None):
+        """Save recording to file (with optional leading/trailing silence trim)."""
+        if audio_data is None:
+            audio_data = self.get_recording()
+
+        if len(audio_data) == 0:
+            logger.warning("No audio data to save")
+            return False
+
+        # Optional trimming
+        if self.trim_silence:
+            try:
+                audio_data = self._trim_edges(
+                    audio_data,
+                    db_threshold=self.trim_db_threshold,
+                    min_keep_ms=self.trim_min_silence_ms
+                )
+            except Exception as e:
+                logger.debug(f"Trim failed, using untrimmed audio ({e})")
+
+        try:
+            sf.write(filepath, audio_data, self.sample_rate)
+            logger.info(f"Saved recording: {filepath} (samples={len(audio_data)})")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving recording: {e}")
+            return False
+
+
+    def _trim_edges(self, audio: np.ndarray, db_threshold: float = -40.0, min_keep_ms: int = 120) -> np.ndarray:
+        """
+        Trim leading and trailing silence based on an energy threshold.
+        Keeps a short tail (min_keep_ms) of silence at both edges for naturalness.
+
+        Args:
+            audio: 1D float32 waveform in [-1,1]
+            db_threshold: dBFS threshold below which samples considered silence
+            min_keep_ms: retain this much silence (ms) after first speech onset
+        """
+        if audio.ndim != 1:
+            audio = audio.flatten()
+
+        # Compute frame energies (10 ms frames)
+        frame_len = int(0.01 * self.sample_rate)
+        if frame_len <= 0:
+            return audio
+        eps = 1e-9
+        # Convert threshold dBFS to linear RMS fraction (0 dBFS = max amplitude 1.0)
+        lin_thresh = 10.0 ** (db_threshold / 20.0)
+
+        # Identify first and last frames above threshold
+        num_frames = max(1, len(audio) // frame_len)
+        first_idx = None
+        last_idx = None
+        for i in range(num_frames):
+            frame = audio[i * frame_len:(i + 1) * frame_len]
+            if not len(frame):
+                continue
+            rms = np.sqrt(np.mean(frame * frame) + eps)
+            if rms >= lin_thresh:
+                first_idx = i
+                break
+        for i in range(num_frames - 1, -1, -1):
+            frame = audio[i * frame_len:(i + 1) * frame_len]
+            if not len(frame):
+                continue
+            rms = np.sqrt(np.mean(frame * frame) + eps)
+            if rms >= lin_thresh:
+                last_idx = i
+                break
+
+        if first_idx is None or last_idx is None:
+            # All silence or could not detect; return original
+            return audio
+
+        # Extend boundaries by min_keep_ms
+        pad_frames = int((min_keep_ms / 1000.0) / 0.01)  # min_keep_ms / 10ms
+        start_sample = max(0, (first_idx - pad_frames) * frame_len)
+        end_sample = min(len(audio), (last_idx + pad_frames + 1) * frame_len)
+
+        trimmed = audio[start_sample:end_sample]
+        # Avoid empty
+        if len(trimmed) == 0:
+            return audio
+        return trimmed
+class ParticipantManager:
+    """Manage participant information and recordings"""
+
+    def __init__(self, base_output_dir="data/recordings"):
+        """
+        Initialize participant manager
+
+        Args:
+            base_output_dir: Base directory for all recordings
+        """
+        self.base_output_dir = Path(base_output_dir)
+        self.participants = {}
+        self.current_participant = None
+
+        # Create base directory
+        self.base_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load existing participants
+        self.load_participants()
+
+    def load_participants(self):
+        """Load existing participant data"""
+        participants_file = self.base_output_dir / "participants.json"
+        if participants_file.exists():
+            try:
+                with open(participants_file, 'r', encoding='utf-8') as f:
+                    self.participants = json.load(f)
+                logger.info(f"Loaded {len(self.participants)} participants")
+            except Exception as e:
+                logger.error(f"Error loading participants: {e}")
+
+    def save_participants(self):
+        """Save participant data"""
+        participants_file = self.base_output_dir / "participants.json"
+        try:
+            with open(participants_file, 'w', encoding='utf-8') as f:
+                json.dump(self.participants, f, ensure_ascii=False, indent=2)
+            logger.info("Saved participant data")
+        except Exception as e:
+            logger.error(f"Error saving participants: {e}")
+
+    def add_participant(self, participant_id, metadata=None):
+        """
+        Add new participant
+
+        Args:
+            participant_id: Unique participant identifier
+            metadata: Additional participant information
+        """
+        if metadata is None:
+            metadata = {}
+
+        participant_info = {
+            'id': participant_id,
+            'created_date': datetime.now().isoformat(),
+            'recording_sessions': [],
+            'total_recordings': 0,
+            'metadata': metadata
+        }
+
+        self.participants[participant_id] = participant_info
+
+        # Create participant directory
+        participant_dir = self.base_output_dir / participant_id
+        participant_dir.mkdir(exist_ok=True)
+
+        self.save_participants()
+        logger.info(f"Added participant: {participant_id}")
+
+        return participant_info
+
+    def get_participant(self, participant_id):
+        """Get participant information"""
+        return self.participants.get(participant_id)
+
+    def set_current_participant(self, participant_id):
+        """Set current active participant"""
+        if participant_id not in self.participants:
+            # Create new participant
+            self.add_participant(participant_id)
+
+        self.current_participant = participant_id
+        logger.info(f"Set current participant: {participant_id}")
+
+    def get_participant_dir(self, participant_id=None):
+        """Get participant's recording directory"""
+        if participant_id is None:
+            participant_id = self.current_participant
+
+        if participant_id is None:
+            raise ValueError("No participant specified")
+
+        return self.base_output_dir / participant_id
+
+    def add_recording_session(self, participant_id, session_metadata):
+        """Add recording session to participant"""
+        if participant_id in self.participants:
+            self.participants[participant_id]['recording_sessions'].append(session_metadata)
+            self.participants[participant_id]['total_recordings'] += session_metadata.get('recordings_count', 0)
+            self.save_participants()
+
+
+class EnhancedPromptRecorder:
+    """Main prompt recorder with participant management and advanced features"""
+
+    def __init__(self, participant_id=None, output_dir="data/recordings",
+                 prompts_file="data/processed_prompts/training_metadata.json",
+                 auto_stop=True, vad_aggressiveness=2, silence_ms=500,
+                 allow_early_stop=True, stop_key='s', no_countdown=False,
+                 max_duration=30, beep=True):
+        """
+        Initialize enhanced prompt recorder
+
+        Args:
+            participant_id: Participant identifier
+            output_dir: Base output directory
+            prompts_file: Path to prompts metadata file
+            auto_stop: Enable automatic stopping
+            vad_aggressiveness: VAD aggressiveness level (0-3)
+            silence_ms: Silence duration for auto-stop
+            allow_early_stop: Allow manual early stopping
+            stop_key: Key for manual stop
+            no_countdown: Skip countdown before recording
+        """
+        self.output_dir = output_dir
+        self.prompts_file = prompts_file
+        self.auto_stop = auto_stop
+        self.vad_aggressiveness = vad_aggressiveness
+        self.silence_ms = silence_ms
+        self.allow_early_stop = allow_early_stop
+        self.stop_key = stop_key
+        self.no_countdown = no_countdown
+        self.max_duration = max_duration
+        self.beep = beep
+        # Whether native keyboard early-stop is effectively enabled (may be overridden later)
+        self.keyboard_enabled = True
+        # Coverage tracking (intent -> count)
+        self.intent_counts = {}
+        # Progress bars (session + per-recording)
+        self.use_progress = (tqdm is not None and sys.stdout.isatty() and not os.environ.get("NO_PROGRESS"))
+        # Per-recording bar enabled only when explicitly requested later (CLI flag)
+        self.use_recording_bar = False
+        self.session_bar = None
+
+        # Initialize components
+        self.participant_manager = ParticipantManager(output_dir)
+        self.recorder = AudioRecorder(
+            auto_stop=auto_stop,
+            vad_aggressiveness=vad_aggressiveness,
+            silence_duration_ms=silence_ms
+        )
+
+        # Set participant
+        if participant_id:
+            self.participant_manager.set_current_participant(participant_id)
+
+        # Load prompts
+        self.prompts = self.load_prompts()
+        self.session_metadata = {
+            'start_time': datetime.now().isoformat(),
+            'recordings': [],
+            'settings': {
+                'auto_stop': auto_stop,
+                'vad_aggressiveness': vad_aggressiveness,
+                'silence_ms': silence_ms
+            }
+        }
+
+    def load_prompts(self):
+        """Load prompts from a JSON or lean CSV file.
+        CSV mode (prompts_lean.csv format) expects columns:
+          id,text,canonical_intent,slot_type,slot_value,notes
+        These are mapped to internal prompt dict fields:
+          id, text, intent, meaning (from notes), section (''), slot_type, slot_value
+        """
+        # Detect CSV vs JSON by file extension
+        path = self.prompts_file
+        if path.lower().endswith(".csv"):
+            prompts = []
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(filter(lambda l: not l.strip().startswith("#"), f))
+                    for row in reader:
+                        if not row.get("id") or not row.get("canonical_intent") or not row.get("text"):
+                            continue
+                        prompts.append({
+                            "id": row["id"],
+                            "text": row["text"],
+                            "intent": row["canonical_intent"],
+                            "meaning": row.get("notes", "") or "",
+                            "section": "",
+                            "slot_type": row.get("slot_type", "") or "",
+                            "slot_value": row.get("slot_value", "") or ""
+                        })
+                logger.info(f"Loaded {len(prompts)} prompts from CSV")
+                return prompts
+            except Exception as e:
+                logger.error(f"Error loading CSV prompts: {e}")
+                return []
+        # JSON fallback
+        try:
+            with open(self.prompts_file, 'r', encoding='utf-8') as f:
+                prompts = json.load(f)
+            logger.info(f"Loaded {len(prompts)} prompts from JSON")
+            return prompts
+        except Exception as e:
+            logger.error(f"Error loading prompts: {e}")
+            return []
+
+    def display_participant_info(self):
+        """Display current participant information"""
+        if not self.participant_manager.current_participant:
+            print("❌ No participant set")
+            return
+
+        participant_id = self.participant_manager.current_participant
+        participant = self.participant_manager.get_participant(participant_id)
+
+        if not isinstance(participant, dict):
+            print("❌ Participant metadata unavailable")
+            return
+        created_date = (participant.get('created_date') or '')[:10]
+        total_rec = participant.get('total_recordings', 0)
+        sessions = participant.get('recording_sessions', [])
+        print(f"\n👤 Current Participant: {participant_id}")
+        print(f"📅 Created: {created_date}")
+        print(f"🎙️  Total Recordings: {total_rec}")
+        print(f"📊 Sessions: {len(sessions)}")
+
+    def display_prompts_summary(self):
+        """Display summary of available prompts"""
+        if not self.prompts:
+            print("❌ No prompts loaded")
+            return
+
+        # Group by section and intent
+        sections = {}
+        intents = {}
+
+        for prompt in self.prompts:
+            section = prompt.get('section', 'Unknown')
+            intent = prompt.get('intent', 'Unknown')
+
+            if section not in sections:
+                sections[section] = 0
+            sections[section] += 1
+
+            if intent not in intents:
+                intents[intent] = 0
+            intents[intent] += 1
+
+        print(f"\n📋 Prompts Summary:")
+        print(f"Total Prompts: {len(self.prompts)}")
+        print(f"Sections: {len(sections)}")
+        print(f"Intents: {len(intents)}")
+
+        print(f"\nTop Sections:")
+        for section, count in sorted(sections.items(), key=lambda x: x[1], reverse=True)[:5]:
+            print(f"  {section}: {count} prompts")
+
+        print(f"\nTop Intents:")
+        for intent, count in sorted(intents.items(), key=lambda x: x[1], reverse=True)[:5]:
+            print(f"  {intent}: {count} prompts")
+
+    def record_prompt(self, prompt, sample_number=1):
+        """
+        Record a single prompt
+
+        Args:
+            prompt: Prompt dictionary
+            sample_number: Sample number for this prompt
+
+        Returns:
+            bool: Success status
+        """
+        participant_id = self.participant_manager.current_participant
+        if not participant_id:
+            logger.error("No participant set")
+            return False
+
+        # Display prompt information
+        text_val = prompt.get('text', '') if isinstance(prompt, dict) else ''
+        meaning_val = ''
+        if isinstance(prompt, dict):
+            # Prefer explicit 'meaning', else reuse notes/slot info as fallback
+            meaning_val = prompt.get('meaning') or prompt.get('notes', '') or ''
+        intent_val = prompt.get('intent', '') if isinstance(prompt, dict) else ''
+        if not text_val or not intent_val:
+            logger.error("Prompt missing required 'text' or 'intent' fields; skipping.")
+            return False
+        print(f"\n🎯 Prompt: {text_val}")
+        print(f"📝 Meaning: {meaning_val}")
+        print(f"🎪 Intent: {intent_val}")
+        print(f"📂 Section: {prompt.get('section', 'Unknown') if isinstance(prompt, dict) else ''}")
+        print(f"🔢 Sample: {sample_number}")
+        # Display slots if present
+        slot_t = prompt.get('slot_type', '') if isinstance(prompt, dict) else ''
+        slot_v = prompt.get('slot_value', '') if isinstance(prompt, dict) else ''
+        if slot_t or slot_v:
+            print(f"🔖 Slot: {slot_t} = {slot_v}")
+
+        # Generate filename
+        safe_text = self.make_safe_filename(text_val)
+        timestamp = int(time.time())
+        filename = f"{intent_val}_{safe_text}_s{sample_number:02d}_{timestamp}.wav"
+
+        participant_dir = self.participant_manager.get_participant_dir()
+        filepath = participant_dir / filename
+
+        # Recording process
+        try:
+            if not self.no_countdown:
+                print("\n⏳ Preparing to record...")
+                for i in range(3, 0, -1):
+                    print(f"   {i}...")
+                    time.sleep(1)
+
+            if self.beep:
+                print("\a", end="", flush=True)  # start beep
+            print("🎙️  Recording... Speak now!")
+            rec_bar = None
+            if self.use_recording_bar and self.use_progress:
+                try:
+                    rec_bar = tqdm(total=self.max_duration, desc="Rec", unit="s", leave=False, dynamic_ncols=True)
+                except Exception:
+                    rec_bar = None
+            if self.auto_stop:
+                print(f"   (Auto-stop after {self.silence_ms}ms silence)")
+            if self.allow_early_stop:
+                if KEYBOARD_AVAILABLE:
+                    print(f"   (Press '{self.stop_key}' to stop early)")
+                else:
+                    # Cross‑platform stdin based fallback (press key then Enter)
+                    print(f"   (Early stop: type '{self.stop_key}' then press Enter)")
+
+            # Start recording
+            self.recorder.start_recording()
+
+            # Handle early stopping:
+            # 1. Native keyboard module (if enabled)
+            # 2. Stdin fallback (type key then Enter) when keyboard module disabled
+            if self.allow_early_stop:
+                if getattr(self, "keyboard_enabled", KEYBOARD_AVAILABLE):
+                    def check_stop_key():
+                        try:
+                            while self.recorder.recording:
+                                if _safe_key_pressed(self.stop_key):
+                                    print(f"\n⏹️  Early stop triggered ('{self.stop_key}' pressed)")
+                                    self.recorder.stop_recording()
+                                    break
+                                time.sleep(0.1)
+                        except OSError as oe:
+                            print(f"\n⚠️  Keyboard listener disabled (OS error: {oe}).")
+                        except Exception as e:
+                            print(f"\n⚠️  Keyboard listener error ({e}).")
+                    threading.Thread(target=check_stop_key, daemon=True).start()
+                else:
+                    # stdin fallback (press key + Enter)
+                    print(f"   (Early stop fallback: type '{self.stop_key}' then press Enter)")
+                    def stdin_fallback():
+                        import select
+                        while self.recorder.recording:
+                            try:
+                                if select.select([sys.stdin], [], [], 0.15)[0]:
+                                    line = sys.stdin.readline().strip().lower()
+                                    if line == self.stop_key.lower():
+                                        print(f"\n⏹️  Early stop triggered ('{self.stop_key}' typed)")
+                                        self.recorder.stop_recording()
+                                        break
+                            except Exception:
+                                break
+                            time.sleep(0.05)
+                    threading.Thread(target=stdin_fallback, daemon=True).start()
+
+            # Wait for recording to complete
+            start_time = time.time()
+            max_duration = self.max_duration  # Configurable maximum recording duration
+
+            while self.recorder.recording and (time.time() - start_time) < max_duration:
+                elapsed = time.time() - start_time
+                if 'rec_bar' in locals() and rec_bar:
+                    rec_bar.n = min(elapsed, self.max_duration)
+                    rec_bar.set_postfix({
+                        "t": f"{elapsed:4.1f}"
+                    }, refresh=False)
+                    try:
+                        rec_bar.refresh()
+                    except Exception:
+                        pass
+                time.sleep(0.1)
+
+            if self.recorder.recording:
+                print("\n⏰ Maximum duration reached, stopping...")
+                self.recorder.stop_recording()
+            if 'rec_bar' in locals() and rec_bar:
+                try:
+                    rec_bar.close()
+                except Exception:
+                    pass
+
+            # Save recording
+            audio_data = self.recorder.get_recording()
+            if len(audio_data) > 0:
+                success = self.recorder.save_recording(filepath, audio_data)
+                if success:
+                    duration = len(audio_data) / self.recorder.sample_rate
+                    print(f"✅ Saved: {filename} ({duration:.2f}s)")
+                    if self.beep:
+                        print("\a", end="", flush=True)  # end beep
+                    # Update coverage stats
+                    intent_key = prompt.get('intent', '')
+                    if intent_key:
+                        self.intent_counts[intent_key] = self.intent_counts.get(intent_key, 0) + 1
+                        # Lightweight coverage summary (top 5 intents by count)
+                        if len(self.intent_counts) > 0:
+                            top_intents = sorted(self.intent_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+                            summary = ", ".join([f"{k}:{v}" for k, v in top_intents])
+                            print(f"📊 Coverage (top intents): {summary}")
+
+                    # Add to session metadata
+                    recording_metadata = {
+                        'filename': filename,
+                        'filepath': str(filepath),
+                        'prompt_id': prompt.get('id', ''),
+                        'text': prompt.get('text', ''),
+                        'intent': prompt.get('intent', ''),
+                        'section': prompt.get('section', ''),
+                        'meaning': prompt.get('meaning', ''),
+                        'sample_number': sample_number,
+                        'duration': duration,
+                        'timestamp': datetime.now().isoformat(),
+                    }
+                    # Add slot info if present in prompt
+                    recording_metadata['slot_type'] = prompt.get('slot_type', '')
+                    recording_metadata['slot_value'] = prompt.get('slot_value', '')
+                    self.session_metadata['recordings'].append(recording_metadata)
+                    # Create canonical id-based copy for downstream feature extraction
+                    pid = prompt.get('id')
+                    participant_id = self.participant_manager.current_participant
+                    if pid and participant_id:
+                        # Normal case: participant known
+                        participant_root = Path("data/raw") / str(participant_id)
+                        participant_root.mkdir(parents=True, exist_ok=True)
+                        canonical_path = participant_root / f"{pid}.wav"
+                        if not canonical_path.exists():
+                            try:
+                                sf.write(str(canonical_path), audio_data, self.recorder.sample_rate)
+                                try:
+                                    rel_path = canonical_path.relative_to(Path("data"))
+                                except ValueError:
+                                    rel_path = canonical_path
+                                print(f"   ↳ Canonical copy: {rel_path}")
+                            except Exception as ce:
+                                logger.warning(f"Could not create canonical id copy: {ce}")
+                    elif pid:
+                        # Fallback: participant not set; avoid Path / None error
+                        participant_root = Path("data/raw/_unknown")
+                        participant_root.mkdir(parents=True, exist_ok=True)
+                        canonical_path = participant_root / f"{pid}.wav"
+                        if not canonical_path.exists():
+                            try:
+                                sf.write(str(canonical_path), audio_data, self.recorder.sample_rate)
+                                print(f"   ↳ Canonical copy (no participant): {canonical_path}")
+                            except Exception as ce:
+                                logger.warning(f"Could not create fallback canonical id copy: {ce}")
+
+                    # Update session progress bar (only once per prompt, sample_number==1)
+                    if self.session_bar and sample_number == 1:
+                        try:
+                            self.session_bar.update(1)
+                            if self.intent_counts:
+                                top_intents = sorted(self.intent_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+                                cov = " ".join([f"{k}:{v}" for k, v in top_intents])
+                                self.session_bar.set_postfix({"cov": cov}, refresh=False)
+                        except Exception:
+                            pass
+                    return True
+                else:
+                    print("❌ Failed to save recording")
+                    return False
+            else:
+                print("❌ No audio recorded")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error recording prompt: {e}")
+            return False
+        finally:
+            self.recorder.stop_recording()
+
+    def make_safe_filename(self, text):
+        """Create safe filename from text"""
+        import re
+        safe = re.sub(r'[^\w\s-]', '', text)
+        safe = re.sub(r'[-\s]+', '_', safe)
+        return safe[:20]  # Limit length
+
+    def record_by_section(self, section_name, samples_per_prompt=3):
+        """Record all prompts in a section"""
+        section_prompts = [p for p in self.prompts if p.get('section') == section_name]
+
+        if not section_prompts:
+            print(f"❌ No prompts found for section: {section_name}")
+            return
+
+        print(f"\n🎯 Recording Section: {section_name}")
+        print(f"📊 Prompts: {len(section_prompts)}")
+        print(f"🎙️  Samples per prompt: {samples_per_prompt}")
+        print(f"⏱️  Estimated time: {len(section_prompts) * samples_per_prompt * 0.5:.1f} minutes")
+
+        input("\nPress Enter to start recording...")
+
+        success_count = 0
+        total_recordings = len(section_prompts) * samples_per_prompt
+
+        for prompt in tqdm(section_prompts, desc=f"Recording {section_name}"):
+            for sample_num in range(1, samples_per_prompt + 1):
+                success = self.record_prompt(prompt, sample_num)
+                if success:
+                    success_count += 1
+
+                if sample_num < samples_per_prompt:
+                    input("Press Enter for next sample...")
+
+        print(f"\n✅ Section complete: {success_count}/{total_recordings} recordings successful")
+
+    def record_by_intent(self, intent_name, samples_per_prompt=3):
+        """Record all prompts for a specific intent"""
+        intent_prompts = [p for p in self.prompts if p.get('intent') == intent_name]
+
+        if not intent_prompts:
+            print(f"❌ No prompts found for intent: {intent_name}")
+            return
+
+        print(f"\n🎯 Recording Intent: {intent_name}")
+        print(f"📊 Prompts: {len(intent_prompts)}")
+
+        success_count = 0
+        for prompt in intent_prompts:
+            for sample_num in range(1, samples_per_prompt + 1):
+                success = self.record_prompt(prompt, sample_num)
+                if success:
+                    success_count += 1
+
+                if sample_num < samples_per_prompt:
+                    input("Press Enter for next sample...")
+
+        print(f"✅ Intent complete: {success_count} recordings")
+
+    def interactive_recording_session(self):
+        """Run interactive recording session"""
+        print("\n🎙️  ENHANCED PROMPT RECORDER")
+        print("=" * 50)
+        # Initialize session-level progress bar (covers total unique prompts)
+        if self.use_progress and self.session_bar is None:
+            try:
+                self.session_bar = tqdm(total=len(self.prompts), desc="Session", unit="prompt", dynamic_ncols=True)
+            except Exception:
+                self.session_bar = None
+
+        # Display current setup
+        self.display_participant_info()
+        print(f"\n⚙️  Settings:")
+        print(f"   Auto-stop: {self.auto_stop}")
+        print(f"   VAD Aggressiveness: {self.vad_aggressiveness}")
+        print(f"   Silence threshold: {self.silence_ms}ms")
+        if self.allow_early_stop:
+            print(f"   Early stop key: '{self.stop_key}'")
+
+        while True:
+            try:
+                print(f"\n📋 RECORDING MENU")
+                print("=" * 30)
+                print("1. Record by section")
+                print("2. Record by intent")
+                print("3. Record specific prompts")
+                print("4. Record all prompts")
+                print("5. Show prompts summary")
+                print("6. Change participant")
+                print("7. Save session and exit")
+                print("8. Exit without saving")
+
+                choice = input("\nSelect option (1-8): ").strip()
+
+                if choice == '1':
+                    self.record_by_section_menu()
+                elif choice == '2':
+                    self.record_by_intent_menu()
+                elif choice == '3':
+                    self.record_specific_prompts()
+                elif choice == '4':
+                    self.record_all_prompts()
+                elif choice == '5':
+                    self.display_prompts_summary()
+                elif choice == '6':
+                    self.change_participant()
+                elif choice == '7':
+                    self.save_session()
+                    break
+                elif choice == '8':
+                    print("Exiting without saving...")
+                    break
+                else:
+                    print("❌ Invalid option")
+
+            except KeyboardInterrupt:
+                print("\n\n⚠️  Session interrupted")
+                save_choice = input("Save recorded data? (y/n): ").strip().lower()
+                if save_choice == 'y':
+                    self.save_session()
+                break
+
+    def record_by_section_menu(self):
+        """Show section selection menu"""
+        sections = list(set(p.get('section', 'Unknown') for p in self.prompts))
+        sections.sort()
+
+        print(f"\n📂 Available Sections:")
+        for i, section in enumerate(sections, 1):
+            section_count = len([p for p in self.prompts if p.get('section') == section])
+            print(f"{i}. {section} ({section_count} prompts)")
+
+        try:
+            choice = int(input("\nSelect section number: ")) - 1
+            if 0 <= choice < len(sections):
+                samples = int(input("Samples per prompt (default 3): ") or "3")
+                self.record_by_section(sections[choice], samples)
+            else:
+                print("❌ Invalid section number")
+        except ValueError:
+            print("❌ Invalid input")
+
+    def record_by_intent_menu(self):
+        """Show intent selection menu"""
+        intents = list(set(p.get('intent', 'Unknown') for p in self.prompts))
+        intents.sort()
+
+        print(f"\n🎯 Available Intents:")
+        for i, intent in enumerate(intents, 1):
+            intent_count = len([p for p in self.prompts if p.get('intent') == intent])
+            print(f"{i}. {intent} ({intent_count} prompts)")
+
+        try:
+            choice = int(input("\nSelect intent number: ")) - 1
+            if 0 <= choice < len(intents):
+                samples = int(input("Samples per prompt (default 3): ") or "3")
+                self.record_by_intent(intents[choice], samples)
+            else:
+                print("❌ Invalid intent number")
+        except ValueError:
+            print("❌ Invalid input")
+
+    def record_specific_prompts(self):
+        """Record user-selected prompts"""
+        print(f"\n📝 Select prompts to record:")
+        for i, prompt in enumerate(self.prompts, 1):
+            print(f"{i}. {prompt['text']} -> {prompt['intent']}")
+
+        try:
+            selections = input("\nEnter prompt numbers (comma-separated): ").strip()
+            if not selections:
+                return
+
+            indices = [int(x.strip()) - 1 for x in selections.split(',')]
+            samples = int(input("Samples per prompt (default 3): ") or "3")
+
+            success_count = 0
+            for idx in indices:
+                if 0 <= idx < len(self.prompts):
+                    prompt = self.prompts[idx]
+                    for sample_num in range(1, samples + 1):
+                        success = self.record_prompt(prompt, sample_num)
+                        if success:
+                            success_count += 1
+
+                        if sample_num < samples:
+                            input("Press Enter for next sample...")
+                else:
+                    print(f"❌ Invalid prompt number: {idx + 1}")
+
+            print(f"✅ Completed: {success_count} recordings")
+
+        except ValueError:
+            print("❌ Invalid input")
+
+    def record_all_prompts(self):
+        """Record all available prompts"""
+        samples = int(input("Samples per prompt (default 2): ") or "2")
+
+        print(f"\n🎙️  Recording ALL {len(self.prompts)} prompts")
+        print(f"🎯 {samples} samples each = {len(self.prompts) * samples} total recordings")
+        print("⚠️  This will take a while!")
+
+        confirm = input("\nContinue? (y/n): ").strip().lower()
+        if confirm != 'y':
+            return
+
+        success_count = 0
+        total_recordings = len(self.prompts) * samples
+
+        for prompt in tqdm(self.prompts, desc="Recording all prompts"):
+            for sample_num in range(1, samples + 1):
+                success = self.record_prompt(prompt, sample_num)
+                if success:
+                    success_count += 1
+
+        print(f"✅ All prompts complete: {success_count}/{total_recordings} successful")
+
+    def change_participant(self):
+        """Change current participant"""
+        new_id = input("Enter participant ID: ").strip()
+        if new_id:
+            # Save current session first
+            if self.session_metadata['recordings']:
+                self.save_session()
+
+            # Switch participant
+            self.participant_manager.set_current_participant(new_id)
+
+            # Reset session
+            self.session_metadata = {
+                'start_time': datetime.now().isoformat(),
+                'recordings': [],
+                'settings': self.session_metadata['settings']
+            }
+
+            self.display_participant_info()
+
+    def save_session(self):
+        """Save current recording session"""
+        if not self.participant_manager.current_participant:
+            print("❌ No participant set")
+            return
+
+        if not self.session_metadata['recordings']:
+            print("ℹ️  No recordings to save")
+            return
+
+        # Finalize session metadata
+        self.session_metadata['end_time'] = datetime.now().isoformat()
+        self.session_metadata['recordings_count'] = len(self.session_metadata['recordings'])
+
+        # Save session file
+        participant_dir = self.participant_manager.get_participant_dir()
+        session_file = participant_dir / f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        try:
+            with open(session_file, 'w', encoding='utf-8') as f:
+                json.dump(self.session_metadata, f, ensure_ascii=False, indent=2)
+
+            # Update participant info
+            self.participant_manager.add_recording_session(
+                self.participant_manager.current_participant,
+                self.session_metadata
+            )
+
+            print(f"✅ Session saved: {len(self.session_metadata['recordings'])} recordings")
+            print(f"📁 Session file: {session_file}")
+
+        except Exception as e:
+            logger.error(f"Error saving session: {e}")
+
+
+def main():
+    """Main function with command line interface"""
+    parser = argparse.ArgumentParser(
+        description="Enhanced Prompt Recorder for Akan Speech Dataset",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Record with participant ID and auto-stop
+  python -m src.utils.prompt_recorder --participant P01 --auto-stop --vad webrtc
+
+  # Record with custom settings
+  python -m src.utils.prompt_recorder --participant P02 --vad-aggressiveness 3 --silence-ms 600
+
+  # Manual recording mode
+  python -m src.utils.prompt_recorder --participant P03 --no-auto-stop --allow-early-stop
+        """
+    )
+
+    parser.add_argument("--participant", type=str, required=True,
+                       help="Participant ID (e.g., P01, P02)")
+    parser.add_argument("--output-dir", type=str, default="data/recordings",
+                       help="Base output directory")
+    parser.add_argument("--prompts-file", type=str,
+                       default="data/processed_prompts/training_metadata.json",
+                       help="Path to prompts file (JSON or lean CSV with canonical_intent).")
+
+    # Recording settings
+    parser.add_argument("--auto-stop", action="store_true", default=True,
+                       help="Enable automatic stopping on silence")
+    parser.add_argument("--no-auto-stop", action="store_true",
+                       help="Disable automatic stopping")
+    parser.add_argument("--vad", type=str, choices=["webrtc", "energy"], default="webrtc",
+                       help="Voice activity detection method")
+    parser.add_argument("--vad-aggressiveness", type=int, choices=[0, 1, 2, 3], default=2,
+                       help="VAD aggressiveness level (0=least, 3=most aggressive)")
+    parser.add_argument("--silence-ms", type=int, default=500,
+                       help="Silence duration for auto-stop (milliseconds)")
+
+    # Control settings
+    parser.add_argument("--allow-early-stop", action="store_true", default=True,
+                       help="Allow early stopping with key press")
+    parser.add_argument("--stop-key", type=str, default="s",
+                       help="Key for early stopping")
+    parser.add_argument("--no-countdown", action="store_true",
+                       help="Skip countdown before recording")
+    parser.add_argument("--disable-keyboard", action="store_true",
+                       help="Disable keyboard listener (permission / CI workaround)")
+    parser.add_argument("--force-keyboard", action="store_true",
+                       help="Force enable keyboard listener even on macOS (requires Accessibility/Input Monitoring permissions)")
+    parser.add_argument("--max-duration", type=int, default=30,
+                       help="Maximum recording duration (seconds)")
+    parser.add_argument("--no-beep", action="store_true",
+                       help="Disable start/end beeps")
+    parser.add_argument("--no-trim", action="store_true",
+                       help="Disable automatic leading/trailing silence trimming")
+    parser.add_argument("--trim-threshold", type=float, default=-40.0,
+                       help="Silence trim dBFS threshold (default: -40.0)")
+    parser.add_argument("--trim-keep-ms", type=int, default=120,
+                       help="Silence (ms) to retain at each edge after trimming (default: 120)")
+    parser.add_argument("--no-progress", action="store_true",
+                       help="Disable all progress bars (session and per-recording)")
+    parser.add_argument("--progress-detail", action="store_true",
+                       help="Show per-recording progress bar (requires tqdm & TTY)")
+
+    # Quick recording modes
+    parser.add_argument("--section", type=str,
+                       help="Record specific section only")
+    parser.add_argument("--intent", type=str,
+                       help="Record specific intent only")
+    parser.add_argument("--samples", type=int, default=3,
+                       help="Number of samples per prompt")
+
+    args = parser.parse_args()
+    # Progress bar preferences (applied after recorder creation)
+    no_progress_flag = getattr(args, "no_progress", False)
+    progress_detail_flag = getattr(args, "progress_detail", False)
+
+    # Handle auto-stop setting
+    if args.no_auto_stop:
+        auto_stop = False
+    else:
+        auto_stop = args.auto_stop
+
+    # Validate WebRTC availability
+    if args.vad == "webrtc" and not WEBRTC_AVAILABLE:
+        print("Warning: WebRTC VAD not available, falling back to energy detection")
+
+    # Initialize recorder
+    # Determine if we should disable keyboard (permissions or explicit flag)
+    disable_keyboard_env = os.environ.get("DISABLE_KEYBOARD_LISTENER", "").lower() in ("1", "true", "yes")
+    # Auto-disable on macOS unless --force-keyboard explicitly provided
+    auto_mac_disable = (sys.platform == "darwin" and not args.force_keyboard)
+    effective_keyboard_disabled = args.disable_keyboard or disable_keyboard_env or auto_mac_disable
+    if effective_keyboard_disabled:
+        KEYBOARD_AVAILABLE_FLAG = False
+    else:
+        KEYBOARD_AVAILABLE_FLAG = KEYBOARD_AVAILABLE
+    if auto_mac_disable and not args.disable_keyboard and not args.force_keyboard:
+        print("ℹ️  Keyboard listener auto-disabled on macOS (use --force-keyboard after granting Accessibility/Input Monitoring permissions to enable).")
+
+    recorder = EnhancedPromptRecorder(
+        participant_id=args.participant,
+        output_dir=args.output_dir,
+        prompts_file=args.prompts_file,
+        auto_stop=auto_stop,
+        vad_aggressiveness=args.vad_aggressiveness,
+        silence_ms=args.silence_ms,
+        allow_early_stop=args.allow_early_stop and KEYBOARD_AVAILABLE_FLAG,
+        stop_key=args.stop_key,
+        no_countdown=args.no_countdown,
+        max_duration=args.max_duration,
+        beep=not args.no_beep
+    )
+    # Propagate trimming preferences down to underlying audio recorder
+    recorder.recorder.trim_silence = not args.no_trim
+    recorder.recorder.trim_db_threshold = args.trim_threshold
+    recorder.recorder.trim_min_silence_ms = args.trim_keep_ms
+    # Persist effective keyboard enable flag so record_prompt can suppress thread creation cleanly
+    recorder.keyboard_enabled = KEYBOARD_AVAILABLE_FLAG
+    # Apply progress bar flags
+    if no_progress_flag:
+        recorder.use_progress = False
+    if progress_detail_flag and recorder.use_progress:
+        recorder.use_recording_bar = True
+
+    if not KEYBOARD_AVAILABLE_FLAG and args.allow_early_stop:
+        print("⚠️  Keyboard early-stop disabled (auto or explicit).")
+        print("    Use auto-stop, type the stop key + Enter (stdin fallback), or Ctrl+C.")
+
+    # Quick recording modes
+    if args.section:
+        recorder.record_by_section(args.section, args.samples)
+    elif args.intent:
+        recorder.record_by_intent(args.intent, args.samples)
+    else:
+        # Interactive mode
+        recorder.interactive_recording_session()
+
+
+if __name__ == "__main__":
+    main()

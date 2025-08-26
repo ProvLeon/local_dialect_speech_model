@@ -1,0 +1,162 @@
+id,text,canonical_intent,slot_type,slot_value,notes
+# =========================
+# Lean E-commerce Voice Prompt Set with Slot Annotations
+# Strategy:
+#  - Keep only high-impact intents (≈30) that map directly to backend or UI actions
+#  - Everything else becomes slot variation (brand, category, size, color, price_range, rating, sort_key, delta, quantity)
+#  - Removed low early-value or redundant prompts: scroll_up/down, open_app, cancel_checkout (folded into cancel_order), media upload support, separate fast_delivery intent (now filter with slot), voucher (folded into coupon), # open_delivery_options (checkout stage)
+filter_apply_fast_delivery_1,Fa ntɛm delivery to so,apply_filter,qualifier,fast_delivery,
+#  - Consolidated similar product info queries
+#  - Added synthetic absolute quantity examples (set_quantity)
+# Intents kept:
+# Navigation: go_home, go_back, continue, show_cart, open_account, open_orders, open_wishlist
+# Discovery: search, apply_filter, clear_filter, sort_items, show_similar_items
+# Product info: show_description, show_price, show_reviews
+# Cart/Purchase: add_to_cart, remove_from_cart, change_quantity, set_quantity, clear_cart, save_for_later, checkout, confirm_order, make_payment, cancel_order
+# Post-purchase: track_order, show_order_status, refund_status, return_item, exchange_item
+# Addresses: show_addresses, add_address, remove_address, set_default_address
+# Promotions: apply_coupon, remove_coupon
+# Notifications: enable_order_updates, disable_order_updates, enable_price_alert, disable_price_alert
+# Support/Help: help, start_live_chat, show_faqs
+# Variants: select_color, select_size, change_color, change_size
+# Slots used:
+#  - category, brand, qualifier, price_range, rating, sort_key, color, size, delta, quantity, context, payment_method
+# =========================
+
+# ---- Navigation ----
+nav_home_1,Kɔ fie,go_home,,,
+nav_home_2,Kɔ home,go_home,,,"variant"
+nav_home_3,Kɔ homepage,go_home,,,"variant"
+nav_back_1,San w'akyi,go_back,,,
+nav_back_2,San kɔ,go_back,,,"variant"
+nav_forward_1,Kɔ w'anim,continue,,,
+nav_cart_1,Kɔ cart no mu,show_cart,,,
+nav_cart_2,Kɔ cart,show_cart,,,"variant"
+nav_wishlist_1,Kɔ wishlist no mu,open_wishlist,,,
+nav_account_1,Kɔ me account,open_account,,,
+nav_account_2,Kɔ me akawnt,open_account,,,"spelling variant"
+nav_orders_1,Kɔ me orders,open_orders,,,
+
+# ---- Search / Discovery (slot-driven) ----
+search_cat_clothing_1,Hwehwɛ ntadeɛ,search,category,clothing,
+search_cat_electronics_1,Hwehwɛ mfidie,search,category,electronics,
+search_cat_shoes_1,Hwehwɛ mpaboa,search,category,shoes,
+search_cat_home_1,Hwehwɛ fie nnoɔma,search,category,home_items,
+search_cat_food_1,Hwehwɛ nnuane,search,category,groceries,
+search_cat_gifts_1,Hwehwɛ akyɛdeɛ,search,category,gifts,
+search_brand_apple_1,Hwehwɛ brand Apple,search,brand,Apple,
+search_brand_nike_1,Hwehwɛ brand Nike,search,brand,Nike,
+search_brand_adidas_1,Hwehwɛ brand Adidas,search,brand,Adidas,
+search_brand_samsung_1,Hwehwɛ brand Samsung,search,brand,Samsung,
+search_brand_techo_1,Hwehwɛ brand Tecno,search,brand,Tecno,
+search_brand_infinix_1,Hwehwɛ brand Infinix,search,brand,Infinix,
+search_qualifier_new_1,Hwehwɛ adeɛ foforɔ,search,qualifier,new,
+search_qualifier_cheap_1,Hwehwɛ adeɛ a ɛyɛ cheap,search,qualifier,cheap,
+search_size_large_1,Hwehwɛ adeɛ kɛse,search,size,large,
+search_size_small_1,Hwehwɛ adeɛ ketewa,search,size,small,
+
+# ---- Filters & Sorting ----
+filter_apply_generic_1,Fa filter fa so,apply_filter,,,
+filter_apply_price_low_1,Fa boɔ ketewa to so,apply_filter,price_range,low,
+filter_apply_price_high_1,Fa boɔ kɛse to so,apply_filter,price_range,high,
+filter_apply_rating_high_1,Fa rating kɛse to so,apply_filter,rating,high,
+filter_clear_1,Yi filter no,clear_filter,,,
+sort_price_low_1,Sort by price ketewa mu,sort_items,sort_key,price_asc,
+sort_price_high_1,Sort by price kɛse mu,sort_items,sort_key,price_desc,
+sort_newest_1,Sort by foforɔ,sort_items,sort_key,newest,
+sort_popular_1,Sort by popular,sort_items,sort_key,popular,
+sort_rating_high_1,Fa rating kɛse di kan,sort_items,sort_key,rating_desc,
+
+# ---- Product Information ----
+prod_show_desc_1,Kyerɛ adeɛ yi ho nsɛm,show_description,,,
+prod_show_price_1,Kyerɛ adeɛ no boɔ,show_price,,,
+prod_show_reviews_1,Kyerɛ reviews,show_reviews,,,
+prod_show_similar_1,Kyerɛ nea ɛte sɛ yei,show_similar_items,,,
+
+# ---- Cart & Wishlist ----
+cart_add_1,Fa yei to cart,add_to_cart,,,
+cart_add_2,Fa yei ka me cart,add_to_cart,,,"variant"
+cart_remove_1,Yi yei firi cart no mu,remove_from_cart,,,
+cart_remove_2,Yi yei firi me cart,remove_from_cart,,,"variant"
+cart_save_wishlist_1,Fa yei to wishlist,save_for_later,,,
+cart_save_wishlist_2,Fa yei ka me wishlist,save_for_later,,,"variant"
+cart_change_qty_inc_1,Fa baako ka ho,change_quantity,delta,+1,
+cart_change_qty_dec_1,Yi baako,change_quantity,delta,-1,
+cart_change_qty_inc_2,Fa baako bio,change_quantity,delta,+1,"variant"
+cart_change_qty_dec_2,Yi baako pɛ,change_quantity,delta,-1,"variant"
+cart_change_qty_multi_1,Fa mmiɛnsa bio ka ho,change_quantity,delta,+3,
+cart_set_qty_abs_1,Hyɛ dodow no yɛ mmiɛnsa,set_quantity,quantity,3,
+cart_set_qty_abs_2,Hyɛ dodow no yɛ enum,set_quantity,quantity,5,
+cart_clear_1,Pepa cart no,clear_cart,,,
+cart_clear_2,Pepa me cart no,clear_cart,,,"variant"
+
+# ---- Checkout & Payment ----
+checkout_start_1,Fa me kɔ checkout,checkout,,,
+checkout_start_2,Kɔ checkout,checkout,,,"variant"
+checkout_confirm_1,Pintim me order no,confirm_order,,,
+payment_select_card_1,Fa card,make_payment,payment_method,card,"Selecting method"
+payment_select_momo_1,Fa Mobile Money,make_payment,payment_method,mobile_money,
+payment_select_momo_2,Fa MoMo,make_payment,payment_method,mobile_money,"abbrev variant"
+payment_pay_now_1,Tua ka,make_payment,,,
+payment_pay_now_2,Tua seesei,make_payment,,,"variant"
+checkout_cancel_order_1,Gyae order no,cancel_order,,,
+checkout_cancel_order_2,Twa order no mu,cancel_order,,,"variant"
+
+# ---- Post-Purchase / Order Management ----
+order_show_list_1,Kyerɛ me orders,show_orders,,,
+order_show_list_2,Hwɛ me orders,show_orders,,,"variant"
+order_status_1,Kyerɛ me order status,show_order_status,,,
+order_track_1,Trake me order no,track_order,,,
+order_not_arrived_1,Me nsa nka me nnoɔma no,order_not_arrived,,,
+order_refund_status_1,Me refund no tebea te sɛn,refund_status,,,
+order_return_1,Mepɛ sɛ mesan de adeɛ no ba,return_item,,,
+order_exchange_1,Mepɛ sɛ mesesa adeɛ no,exchange_item,,,
+order_read_details_1,Kenkan order details no,show_description,context,order_details,
+order_show_receipt_1,Kyerɛ me receipt no,show_description,context,receipt,
+
+# ---- Addresses ----
+addr_show_1,Kyerɛ me addresses,show_addresses,,,
+addr_add_1,Fa address foforɔ ka ho,add_address,,,
+addr_add_2,Fa address foforɔ bio ka ho,add_address,,,"variant"
+addr_remove_1,Yi address no,remove_address,,,
+addr_set_default_1,Fa default address,set_default_address,,,
+
+# ---- Promotions (Coupons) ----
+promo_apply_coupon_1,Fa coupon to so,apply_coupon,,,
+promo_remove_coupon_1,Yi coupon no,remove_coupon,,,
+promo_show_deals_1,Hwɛ deals,search,qualifier,deals,
+promo_show_discounts_1,Hwɛ discounts,search,qualifier,discounts,
+promo_show_flash_sale_1,Hwɛ flash sale,search,qualifier,flash_sale,
+
+# ---- Notifications ----
+notif_enable_orders_1,Sɔ order updates,enable_order_updates,,,
+notif_disable_orders_1,Gyae order updates,disable_order_updates,,,
+notif_enable_price_1,Sɔ price alert,enable_price_alert,,,
+notif_disable_price_1,Gyae price alert,disable_price_alert,,,
+
+# ---- Support / Help ----
+support_help_general_1,Boa me,help,,,
+support_help_open_1,Sɔ mmoa,help,,,"open help section"
+support_live_chat_1,Frɛ live chat,start_live_chat,,,
+support_live_chat_2,Kɔ live chat,start_live_chat,,,"variant"
+support_faqs_1,Kyerɛ FAQs,show_faqs,,,
+
+# ---- Variant & Attribute Selection ----
+var_select_color_black_1,Fa color tuntum,select_color,color,black,
+var_select_color_white_1,Fa color fitaa,select_color,color,white,
+var_select_color_light_1,Fa color anyɛ den,select_color,color,light,
+var_change_color_1,Sesa color no,change_color,,,
+var_select_size_large_1,Fa size kɛse,select_size,size,large,
+var_select_size_small_1,Fa size ketewa,select_size,size,small,
+var_select_size_medium_1,Fa size medium,select_size,size,medium,
+var_select_size_xlarge_1,Fa size extra large,select_size,size,xlarge,
+var_select_size_xsmall_1,Fa size extra small,select_size,size,xsmall,
+var_change_size_1,Sesa size no,change_size,,,
+
+# ---- Product Info Additional (mapped to show_description/reviews/price if needed) ----
+prod_read_page_order_1,Kenkan page yi,show_description,context,page,"Could be accessibility; kept minimal"
+prod_show_similar_variant_1,Kyerɛ adeɛ te sɛ yei,show_similar_items,,,"variant phrasing"
+
+# =========================
+# End of lean prompt set
+# =========================

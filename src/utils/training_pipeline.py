@@ -75,57 +75,84 @@ class TrainingPipeline:
 
 
     def load_data(self):
-        """Load dataset from processed files with enhanced processing"""
+        """Load dataset from processed files with enhanced processing (now slot-aware)"""
         logger.info(f"Loading data from {self.data_dir}...")
 
         # Load features and labels
         features = np.load(os.path.join(self.data_dir, "features.npy"), allow_pickle=True)
         labels = np.load(os.path.join(self.data_dir, "labels.npy"), allow_pickle=True)
 
-        # Load label map
-        label_map_path = os.path.join(self.data_dir, "label_map.npy")
-        if os.path.exists(label_map_path):
-            label_map = np.load(label_map_path, allow_pickle=True).item()
+        # Attempt to load slots (optional)
+        slots_path_json = os.path.join(self.data_dir, "slots.json")
+        if os.path.exists(slots_path_json):
+            try:
+                with open(slots_path_json, "r") as f:
+                    slots = json.load(f)
+                if len(slots) != len(labels):
+                    logger.warning(f"slots.json length {len(slots)} != labels length {len(labels)}. Padding/truncating.")
+                    if len(slots) < len(labels):
+                        slots.extend([{} for _ in range(len(labels) - len(slots))])
+                    else:
+                        slots = slots[:len(labels)]
+            except Exception as e:
+                logger.warning(f"Failed loading slots.json: {e}. Proceeding with empty slot dicts.")
+                slots = [{} for _ in range(len(labels))]
         else:
-            # Create label map if not exists
-            unique_labels = sorted(set(labels))
-            label_map = {label: i for i, label in enumerate(unique_labels)}
-            # np.save(label_map_path, label_map)
-            with open(label_map_path.replace('.npy', '.json'), 'w') as f:
-                json.dump(label_map, f)
+            slots = [{} for _ in range(len(labels))]
 
-        # Clean data
-        features, labels = self._clean_data(features, labels)
+        # Load label map (support legacy .npy or new .json)
+        label_map_path_npy = os.path.join(self.data_dir, "label_map.npy")
+        label_map_path_json = os.path.join(self.data_dir, "label_map.json")
+        label_map = None
+        if os.path.exists(label_map_path_json):
+            try:
+                with open(label_map_path_json, "r") as f:
+                    label_map = json.load(f)
+            except Exception as e:
+                logger.warning(f"Could not read label_map.json: {e}")
+        if label_map is None and os.path.exists(label_map_path_npy):
+            try:
+                label_map = np.load(label_map_path_npy, allow_pickle=True).item()
+            except Exception as e:
+                logger.warning(f"Could not read label_map.npy: {e}")
+        if label_map is None:
+            unique_labels_sorted = sorted(set(labels))
+            label_map = {label: i for i, label in enumerate(unique_labels_sorted)}
+            with open(label_map_path_json, 'w') as f:
+                json.dump(label_map, f, indent=2)
 
-        # Normalize features globally
-        # Comment this out if you want to keep your existing normalization
-        # features = self._normalize_features(features)
+        # Clean data (features / labels) – slots must align with kept indices
+        cleaned_features, cleaned_labels = [], []
+        cleaned_slots = []
+        for feat, lab, sl in zip(features, labels, slots):
+            if np.isnan(feat).any() or np.isinf(feat).any() or feat.size == 0 or np.prod(feat.shape) < 10:
+                continue
+            cleaned_features.append(feat)
+            cleaned_labels.append(lab)
+            cleaned_slots.append(sl)
+
+        features, labels, slots = cleaned_features, cleaned_labels, cleaned_slots
 
         logger.info(f"Loaded {len(features)} samples with {len(label_map)} classes")
 
-        # Print feature dimensions
         if len(features) > 0:
             logger.info(f"Feature shape: {features[0].shape}")
-            # Save feature metadata
             self._save_feature_metadata(features[0].shape[0], len(label_map))
 
-        # Print class distribution
-        unique_labels, counts = np.unique(labels, return_counts=True)
+        unique_labels_arr, counts = np.unique(labels, return_counts=True)
         logger.info("Class distribution:")
-        for label, count in zip(unique_labels, counts):
+        for label, count in zip(unique_labels_arr, counts):
             logger.info(f"  {label}: {count}")
 
         self.analyze_features(features)
 
-        return features, labels, label_map
+        return features, labels, label_map, slots
 
 
-    def create_datasets(self, features, labels, label_map):
-        """Create train and validation datasets"""
-        # Create dataset
-        dataset = TwiDataset(features, labels, label_map)
+    def create_datasets(self, features, labels, label_map, slots):
+        """Create train and validation datasets (slot-aware)"""
+        dataset = TwiDataset(features, labels, label_map, slots=slots)
 
-        # Get indices for splitting
         indices = np.arange(len(dataset))
         label_indices = np.array([dataset.label_to_idx[label] for label in labels])
 
@@ -144,22 +171,36 @@ class TrainingPipeline:
         return train_dataset, val_dataset
 
     def create_dataloaders(self, train_dataset, val_dataset):
-        """Create data loaders for training"""
+        """Create data loaders for training (strips slot dicts for legacy trainers)"""
         batch_size = self.config.get('batch_size', 32)
+
+        def _collate_strip_slots(batch):
+            import torch
+            feats, labs = [], []
+            for sample in batch:
+                if len(sample) == 3:
+                    f, l, _ = sample
+                else:
+                    f, l = sample
+                feats.append(f)
+                labs.append(l)
+            return torch.stack(feats, 0), torch.stack(labs, 0)
 
         train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
             num_workers=2,
-            pin_memory=True if self.device.type == 'cuda' else False
+            pin_memory=True if self.device.type == 'cuda' else False,
+            collate_fn=_collate_strip_slots
         )
 
         val_loader = DataLoader(
             val_dataset,
             batch_size=batch_size,
             num_workers=2,
-            pin_memory=True if self.device.type == 'cuda' else False
+            pin_memory=True if self.device.type == 'cuda' else False,
+            collate_fn=_collate_strip_slots
         )
 
         return train_loader, val_loader
@@ -331,7 +372,7 @@ class TrainingPipeline:
 
     def run(self):
         # 1. Load data
-        features, labels, label_map = self.load_data()
+        features, labels, label_map, slots = self.load_data()
 
         # DEBUG: Print feature shape to understand dimensions
         if len(features) > 0:
@@ -355,7 +396,7 @@ class TrainingPipeline:
             json.dump({'input_dim': int(input_dim)}, f)
 
         # 2. Create datasets
-        train_dataset, val_dataset = self.create_datasets(features, labels, label_map)
+        train_dataset, val_dataset = self.create_datasets(features, labels, label_map, slots)
 
         # 3. Create data loaders
         train_loader, val_loader = self.create_dataloaders(train_dataset, val_dataset)

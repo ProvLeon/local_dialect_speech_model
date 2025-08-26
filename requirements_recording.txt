@@ -1,0 +1,25 @@
+# Additional requirements for enhanced recording features
+# Install with: pip install -r requirements_recording.txt
+
+# Voice Activity Detection
+webrtcvad==2.0.10
+
+# Keyboard input detection for early stopping
+keyboard==0.13.5
+
+# Progress bars for recording sessions
+tqdm==4.66.1
+
+# Audio processing (may already be in main requirements)
+sounddevice==0.4.6
+soundfile==0.12.1
+numpy>=1.21.0
+
+# JSON and file handling (usually built-in)
+pathlib
+
+# Threading support (built-in)
+threading
+queue
+time
+datetime
