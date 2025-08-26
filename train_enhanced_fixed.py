@@ -46,6 +46,50 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+class SimpleTwiModel(nn.Module):
+    """Simplified model for small datasets."""
+
+    def __init__(self, input_dim, hidden_dim, num_classes, dropout=0.3):
+        super(SimpleTwiModel, self).__init__()
+
+        self.input_dim = input_dim
+        self.num_classes = num_classes
+
+        # Simple CNN layers
+        self.conv1 = nn.Conv1d(input_dim, 64, kernel_size=5, padding=2)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.pool1 = nn.MaxPool1d(2)
+
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.pool2 = nn.MaxPool1d(2)
+
+        # Global average pooling
+        self.global_pool = nn.AdaptiveAvgPool1d(1)
+
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(128, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+    def forward(self, x):
+        # x shape: (batch, features, time)
+        x = self.pool1(torch.relu(self.bn1(self.conv1(x))))
+        x = self.pool2(torch.relu(self.bn2(self.conv2(x))))
+
+        # Global pooling
+        x = self.global_pool(x)  # (batch, 128, 1)
+        x = x.squeeze(-1)  # (batch, 128)
+
+        # Classification
+        x = self.classifier(x)
+        return x
+
+
 class EnhancedTwiDataset(Dataset):
     """Enhanced dataset with augmentation and slot support."""
 
@@ -187,17 +231,55 @@ def load_data(data_dir):
 
 
 def create_datasets(features, labels, slots, label_map, augment=True):
-    """Create train, validation, and test datasets."""
-    # Create indices for splitting
-    indices = np.arange(len(features))
+    """Create train, validation, and test datasets with better class distribution."""
+    # For small datasets with many classes, use a different splitting strategy
+    label_counts = Counter(labels)
 
-    # Simple random split (no stratification to handle small classes)
-    train_indices, temp_indices = train_test_split(
-        indices, test_size=0.3, random_state=42
-    )
-    val_indices, test_indices = train_test_split(
-        temp_indices, test_size=0.5, random_state=42
-    )
+    # Find classes with very few samples
+    min_samples = min(label_counts.values())
+
+    if min_samples < 3:
+        # For classes with <3 samples, put all in training set
+        logger.warning(f"Some classes have only {min_samples} samples. Using modified split strategy.")
+
+        train_indices = []
+        val_indices = []
+        test_indices = []
+
+        for label in label_map.keys():
+            label_indices = [i for i, l in enumerate(labels) if l == label]
+            count = len(label_indices)
+
+            if count <= 2:
+                # Put all samples in training
+                train_indices.extend(label_indices)
+            elif count == 3:
+                # 2 for training, 1 for validation
+                train_indices.extend(label_indices[:2])
+                val_indices.append(label_indices[2])
+            else:
+                # Normal split
+                n_train = max(2, int(0.7 * count))
+                n_val = max(1, int(0.2 * count))
+                train_indices.extend(label_indices[:n_train])
+                val_indices.extend(label_indices[n_train:n_train+n_val])
+                test_indices.extend(label_indices[n_train+n_val:])
+
+        # Shuffle the indices
+        np.random.seed(42)
+        np.random.shuffle(train_indices)
+        np.random.shuffle(val_indices)
+        np.random.shuffle(test_indices)
+
+    else:
+        # Standard random split when all classes have enough samples
+        indices = np.arange(len(features))
+        train_indices, temp_indices = train_test_split(
+            indices, test_size=0.3, random_state=42
+        )
+        val_indices, test_indices = train_test_split(
+            temp_indices, test_size=0.5, random_state=42
+        )
 
     # Create subset data
     train_features = [features[i] for i in train_indices]
@@ -242,11 +324,17 @@ def train_model(model, train_loader, val_loader, epochs=20, learning_rate=0.001,
     try:
         class_weights = train_loader.dataset.get_class_weights().to(device)
         logger.info("Using class weights for balanced training")
+        # Log class distribution
+        logger.info(f"Class weights shape: {class_weights.shape}")
+        logger.info(f"Max weight: {class_weights.max():.4f}, Min weight: {class_weights.min():.4f}")
+        # Clip extreme weights to prevent instability
+        class_weights = torch.clamp(class_weights, max=5.0)
     except Exception as e:
         logger.warning(f"Could not compute class weights: {e}")
+        class_weights = None
 
-    # Setup training
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    # Setup training with label smoothing for better generalization
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=5, factor=0.5, verbose=True
@@ -421,9 +509,9 @@ def save_model_and_results(model, label_map, history, model_dir):
     config = {
         "input_dim": model.input_dim,
         "hidden_dim": 256,
-        "num_classes": model.num_classes,
+        "num_classes": getattr(model, 'num_classes', len(label_map)),
         "feature_type": "mfcc",
-        "model_type": "ImprovedTwiSpeechModel",
+        "model_type": model.__class__.__name__,
         "best_val_acc": history.get('best_val_acc', 0.0)
     }
     config_path = os.path.join(model_dir, "config.json")
@@ -504,6 +592,8 @@ def main():
                         help="Learning rate")
     parser.add_argument("--no-augment", action="store_true",
                         help="Disable data augmentation")
+    parser.add_argument("--simple-model", action="store_true",
+                        help="Use simplified model architecture for small datasets")
 
     args = parser.parse_args()
 
@@ -540,12 +630,25 @@ def main():
     num_classes = len(label_map)
 
     logger.info(f"Creating model: input_dim={input_dim}, hidden_dim={hidden_dim}, num_classes={num_classes}")
-    model = ImprovedTwiSpeechModel(
-        input_dim=input_dim,
-        hidden_dim=hidden_dim,
-        num_classes=num_classes,
-        dropout=0.3
-    )
+
+    if args.simple_model or num_classes > 30:  # Use simple model for many classes
+        logger.info("Using SimpleTwiModel for better performance on small/complex datasets")
+        model = SimpleTwiModel(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_classes=num_classes,
+            dropout=0.4
+        )
+    else:
+        model = ImprovedTwiSpeechModel(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_classes=num_classes,
+            dropout=0.3
+        )
+        # Store num_classes for later reference
+        model.num_classes = num_classes
+
     model = model.to(device)
 
     # Train model
