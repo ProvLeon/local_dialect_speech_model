@@ -129,7 +129,10 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
             if hasattr(torch, 'backends') and hasattr(torch.backends, 'cudnn'):
                 torch.backends.cudnn.deterministic = True
     except AttributeError:
-        pass
+    pass
+
+# Import numpy for random operations
+import numpy as np
 
     # 2. Load data using existing pipeline
     pipeline = TrainingPipeline(config)
@@ -150,12 +153,12 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
     indices = np.arange(len(augmented_dataset))
     label_indices = [augmented_dataset.label_to_idx[label] for label in labels]
 
-    # Split with stratification
+    # Split without stratification to handle small class sizes
     train_indices, test_indices = train_test_split(
-        indices, test_size=0.2, stratify=label_indices, random_state=42
+        indices, test_size=0.2, random_state=42
     )
     val_indices, test_indices = train_test_split(
-        test_indices, test_size=0.5, stratify=[label_indices[i] for i in test_indices], random_state=42
+        test_indices, test_size=0.5, random_state=42
     )
 
     # Create subset datasets
@@ -172,16 +175,16 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
         train_dataset,
         batch_size=config['batch_size'],
         shuffle=True,
-        num_workers=4,
+        num_workers=0,  # Avoid multiprocessing issues
         pin_memory=True if torch.cuda.is_available() else False,
         collate_fn=slot_collate
     )
-
     val_loader = DataLoader(
         val_dataset,
         batch_size=config['batch_size'],
         shuffle=False,
-        num_workers=2,
+        num_workers=0,  # Avoid multiprocessing issues
+        pin_memory=True if torch.cuda.is_available() else False,
         collate_fn=slot_collate
     )
 
@@ -189,7 +192,8 @@ def train_enhanced_model(data_dir="data/processed", model_dir="data/models/enhan
         test_dataset,
         batch_size=config['batch_size'],
         shuffle=False,
-        num_workers=2,
+        num_workers=0,  # Avoid multiprocessing issues
+        pin_memory=True if torch.cuda.is_available() else False,
         collate_fn=slot_collate
     )
 
