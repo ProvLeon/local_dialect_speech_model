@@ -19,7 +19,7 @@ util/
 *DS_Store
 .python-version
 *.npy
-*processed*
+*processed_*
 *.zip
 recordings*
 raw_backup*
