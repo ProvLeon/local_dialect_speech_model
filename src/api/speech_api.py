@@ -1,64 +1,110 @@
-# src/api/speech_api.py
-# NOTE: Pending slot-extraction integration edits requested.
-# I need the exact file (with line numbers or the exact blocks to change) to safely apply mechanical edits.
-# Please re-send the relevant sections (imports, RecognitionResponse model, recognize_speech & take_action endpoints)
-# so I can produce precise <old_text>/<new_text> replacements that match exactly.
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import torch
-import tempfile
+# src/api/speech_api.py - Akan (Twi) Speech-to-Action API
+"""
+Akan (Twi) Speech-to-Action API
+
+Features:
+* Enhanced and standard model loading with automatic path resolution
+* Maps always from data/processed unless explicitly overridden
+* Models from data/models by default, with custom base directory support
+* Runtime model reconfiguration via API endpoints
+* Comprehensive diagnostics and metrics
+* E-commerce action integration
+"""
+from __future__ import annotations
+
 import os
-import soundfile as sf
-import numpy as np
 import json
-import time  # Add this import for timestamp generation
+import time
+import tempfile
 import logging
-from typing import Optional, Dict, Any, List  # Add List for proper typing
+from typing import Optional, Dict, Any, List, Tuple
+from threading import RLock
+
+import numpy as np
+import torch
+import soundfile as sf
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-# Import model components
-from src.models.speech_model import IntentClassifier, EnhancedTwiSpeechModel
+from src.models.speech_model import ImprovedTwiSpeechModel, EnhancedTwiSpeechModel
+from src.preprocessing.audio_processor import AudioProcessor
 from src.preprocessing.enhanced_audio_processor import EnhancedAudioProcessor
 from src.utils.ecommerce_integration import EcommerceIntegration
 from src.utils.model_utils import load_label_map, get_model_input_dim
+from src.utils.audio_converter import convert_bytes_to_wav, validate_audio_file
 from config.model_config import MODEL_CONFIG
 from config.api_config import API_CONFIG
 
-# Set up logging
+# ---------------------------------------------------------------------------
+# Logging Setup
+# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# FastAPI App & CORS
+# ---------------------------------------------------------------------------
 app = FastAPI(
     title="Akan (Twi) Speech-to-Action API",
-    description="API for recognizing Twi speech commands and translating them to actions",
-    version="1.1.0"
+    description="Recognize Twi speech commands and map to e-commerce actions.",
+    version="1.2.0"
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=API_CONFIG.get("allowed_origins", ["*"]),
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
-# Define path constants with environment variable overrides
-ENHANCED_MODEL_PATH = os.environ.get("ENHANCED_MODEL_PATH", "data/models_improved/best_model.pt")
-STANDARD_MODEL_PATH = os.environ.get("MODEL_PATH", "data/models_improved/best_model.pt")
-LABEL_MAP_PATH = os.environ.get("LABEL_MAP_PATH", "data/processed_augmented/label_map.npy")
+# ---------------------------------------------------------------------------
+# Global State
+# ---------------------------------------------------------------------------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logger.info(f"Using device: {device}")
 
-# Response models for better documentation
+# Model state
+enhanced_classifier: Optional[Dict[str, Any]] = None
+standard_classifier: Optional[Dict[str, Any]] = None
+
+# Configuration
+confidence_threshold = API_CONFIG.get("confidence_threshold", 0.7)
+request_count = 0
+start_time = time.time()
+processing_times: List[float] = []
+
+# E-commerce integration
+ecommerce = EcommerceIntegration()
+
+# Path configuration
+MODEL_BASE_DIR: str = ""
+DEFAULT_MODELS_ROOT = "data/models"
+DEFAULT_MAPS_ROOT = "data/processed"
+CANDIDATE_PATHS: Dict[str, List[str]] = {}
+
+# Resolved paths
+ENHANCED_MODEL_PATH: str = ""
+STANDARD_MODEL_PATH: str = ""
+LABEL_MAP_PATH: str = ""
+
+# Thread safety
+_model_lock = RLock()
+
+# ---------------------------------------------------------------------------
+# Response Models
+# ---------------------------------------------------------------------------
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     model_type: str
     available_intents: Optional[int] = None
-    api_version: str = "1.1.0"
+    api_version: str = "1.2.0"
 
 class RecognitionResponse(BaseModel):
     filename: str
@@ -71,221 +117,397 @@ class ActionResponse(BaseModel):
     recognition: Dict[str, Any]
     action: Dict[str, Any]
 
-# Global variables
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-logger.info(f"Using device: {device}")
+# ---------------------------------------------------------------------------
+# Path Resolution Functions
+# ---------------------------------------------------------------------------
+def _file_exists(path: str) -> bool:
+    """Check if file exists"""
+    return os.path.exists(path) and os.path.isfile(path)
 
-# Model state
-classifier = None
-enhanced_classifier = None
-confidence_threshold = API_CONFIG.get('confidence_threshold', 0.7)
+def resolve_model_paths(
+    model_base_dir: Optional[str] = None,
+    explicit_enhanced: Optional[str] = None,
+    explicit_standard: Optional[str] = None,
+    explicit_label: Optional[str] = None
+) -> Tuple[Dict[str, str], Dict[str, List[str]]]:
+    """
+    Resolve model and label map paths with proper fallback logic.
 
-# Stats tracking
-request_count = 0
-start_time = time.time()
-processing_times = []
+    Priority:
+    1. Explicit paths (if provided)
+    2. Files in custom base directory (if provided)
+    3. Files in default data/models
+    4. 47-class training results directories
+    5. Legacy fallback paths
+    """
+    base_dir = (model_base_dir or "").strip().rstrip("/")
+    models_root = base_dir if base_dir else DEFAULT_MODELS_ROOT
 
-# Initialize e-commerce integration
-ecommerce = EcommerceIntegration()
+    logger.debug(f"Resolving paths with base_dir='{base_dir}', models_root='{models_root}'")
 
-def get_enhanced_processor():
-    """Get enhanced audio processor with optimized settings"""
-    return EnhancedAudioProcessor(
-        feature_type="combined",
-        augment=False,  # No augmentation for inference
-        sample_rate=MODEL_CONFIG.get('sample_rate', 16000),
-        n_mfcc=MODEL_CONFIG.get('n_mfcc', 13),
-        n_mels=MODEL_CONFIG.get('n_mels', 40)
+    # Build candidate lists
+    enhanced_candidates: List[str] = []
+    standard_candidates: List[str] = []
+
+    if base_dir:
+        # Custom base directory - look for models inside it
+        enhanced_candidates.extend([
+            os.path.join(models_root, "enhanced", "best_model.pt"),
+            os.path.join(models_root, "best_model.pt"),
+            os.path.join(models_root, "model.pt"),
+        ])
+        standard_candidates.extend([
+            os.path.join(models_root, "standard", "best_model.pt"),
+            os.path.join(models_root, "best_model.pt"),
+            os.path.join(models_root, "model.pt"),
+        ])
+    else:
+        # Default case - look in data/models
+        enhanced_candidates.extend([
+            os.path.join(DEFAULT_MODELS_ROOT, "enhanced", "best_model.pt"),
+            os.path.join(DEFAULT_MODELS_ROOT, "best_model.pt"),
+            os.path.join(DEFAULT_MODELS_ROOT, "model.pt"),
+        ])
+        standard_candidates.extend([
+            os.path.join(DEFAULT_MODELS_ROOT, "standard", "best_model.pt"),
+            os.path.join(DEFAULT_MODELS_ROOT, "best_model.pt"),
+            os.path.join(DEFAULT_MODELS_ROOT, "model.pt"),
+        ])
+
+        # Look for 47-class training results
+        results_dir = os.path.join(DEFAULT_MODELS_ROOT, "47_class_results")
+        if os.path.exists(results_dir):
+            # Find the most recent training result
+            subdirs = [d for d in os.listdir(results_dir)
+                      if os.path.isdir(os.path.join(results_dir, d))]
+            if subdirs:
+                # Sort by modification time, get most recent
+                subdirs.sort(key=lambda x: os.path.getmtime(os.path.join(results_dir, x)), reverse=True)
+                latest_result = os.path.join(results_dir, subdirs[0], "best_model.pt")
+                if os.path.exists(latest_result):
+                    enhanced_candidates.insert(1, latest_result)
+                    standard_candidates.insert(1, latest_result)
+
+    # Add legacy fallback (only if not already covered)
+    legacy_path = "data/models_improved/best_model.pt"
+    if legacy_path not in enhanced_candidates:
+        enhanced_candidates.append(legacy_path)
+    if legacy_path not in standard_candidates:
+        standard_candidates.append(legacy_path)
+
+    # Label map candidates (always from processed unless explicit override)
+    label_candidates: List[str] = []
+    if explicit_label:
+        label_candidates.append(explicit_label)
+    else:
+        label_candidates.extend([
+            os.path.join(DEFAULT_MAPS_ROOT, "label_map.json"),
+            os.path.join(DEFAULT_MAPS_ROOT, "label_map.npy"),
+        ])
+
+    # Resolve paths
+    paths: Dict[str, str] = {}
+
+    # Enhanced model
+    if explicit_enhanced:
+        paths["ENHANCED_MODEL_PATH"] = explicit_enhanced
+    else:
+        for candidate in enhanced_candidates:
+            if _file_exists(candidate):
+                paths["ENHANCED_MODEL_PATH"] = candidate
+                break
+        else:
+            # No existing file found, use first candidate as fallback
+            paths["ENHANCED_MODEL_PATH"] = enhanced_candidates[0]
+
+    # Standard model (can reuse enhanced)
+    if explicit_standard:
+        paths["STANDARD_MODEL_PATH"] = explicit_standard
+    else:
+        # Add resolved enhanced path as first candidate for standard
+        standard_candidates.insert(0, paths["ENHANCED_MODEL_PATH"])
+        for candidate in standard_candidates:
+            if _file_exists(candidate):
+                paths["STANDARD_MODEL_PATH"] = candidate
+                break
+        else:
+            paths["STANDARD_MODEL_PATH"] = standard_candidates[0]
+
+    # Label map
+    for candidate in label_candidates:
+        if os.path.exists(candidate):
+            paths["LABEL_MAP_PATH"] = candidate
+            break
+    else:
+        paths["LABEL_MAP_PATH"] = os.path.join(DEFAULT_MAPS_ROOT, "label_map.json")
+
+    candidates = {
+        "enhanced": enhanced_candidates,
+        "standard": standard_candidates,
+        "label_map": label_candidates
+    }
+
+    # Log resolution results
+    logger.info(f"Path resolution completed:")
+    logger.info(f"  MODEL_BASE_DIR: {base_dir or '(default)'}")
+    logger.info(f"  ENHANCED_MODEL_PATH: {paths['ENHANCED_MODEL_PATH']}")
+    logger.info(f"  STANDARD_MODEL_PATH: {paths['STANDARD_MODEL_PATH']}")
+    logger.info(f"  LABEL_MAP_PATH: {paths['LABEL_MAP_PATH']}")
+
+    # Warn about fallbacks
+    if base_dir and not _file_exists(paths["ENHANCED_MODEL_PATH"]):
+        logger.warning(f"Enhanced model not found in custom base directory: {base_dir}")
+
+    return paths, candidates
+
+def apply_resolved_paths(resolved: Dict[str, str], candidates: Dict[str, List[str]]):
+    """Apply resolved paths to global variables"""
+    global ENHANCED_MODEL_PATH, STANDARD_MODEL_PATH, LABEL_MAP_PATH, CANDIDATE_PATHS
+
+    ENHANCED_MODEL_PATH = resolved["ENHANCED_MODEL_PATH"]
+    STANDARD_MODEL_PATH = resolved["STANDARD_MODEL_PATH"]
+    LABEL_MAP_PATH = resolved["LABEL_MAP_PATH"]
+    CANDIDATE_PATHS = candidates
+
+    logger.info(f"Applied resolved paths: E={ENHANCED_MODEL_PATH}, S={STANDARD_MODEL_PATH}, L={LABEL_MAP_PATH}")
+
+def initialize_paths():
+    """Initialize model paths from environment variables - called at startup"""
+    global MODEL_BASE_DIR
+
+    # Get MODEL_BASE_DIR from environment (set by app.py if provided via CLI)
+    MODEL_BASE_DIR = os.environ.get("MODEL_BASE_DIR", "").strip().rstrip("/")
+
+    # Resolve paths
+    resolved_paths, candidates = resolve_model_paths(
+        MODEL_BASE_DIR,
+        explicit_enhanced=os.environ.get("ENHANCED_MODEL_PATH"),
+        explicit_standard=os.environ.get("MODEL_PATH"),
+        explicit_label=os.environ.get("LABEL_MAP_PATH")
     )
 
-def load_enhanced_model():
-    """Load enhanced model for speech recognition"""
-    global enhanced_classifier
+    # Apply resolved paths
+    apply_resolved_paths(resolved_paths, candidates)
 
+# ---------------------------------------------------------------------------
+# Model Loading Functions
+# ---------------------------------------------------------------------------
+def create_processor() -> AudioProcessor:
+    """Create audio processor with standard settings"""
+    return AudioProcessor(
+        sample_rate=MODEL_CONFIG.get("sample_rate", 16000),
+        n_mfcc=MODEL_CONFIG.get("n_mfcc", 13),
+        n_fft=MODEL_CONFIG.get("n_fft", 2048),
+        hop_length=MODEL_CONFIG.get("hop_length", 512),
+        enable_deltas=True,
+        enable_audio_augment=False,
+        enable_spec_augment=False
+    )
+
+def load_label_map_safe() -> Dict[str, int]:
+    """Load label map with error handling"""
     try:
-        if os.path.exists(ENHANCED_MODEL_PATH):
-            # Load label map and get input dimension
-            label_map = load_label_map(LABEL_MAP_PATH)
-            input_dim = get_model_input_dim(ENHANCED_MODEL_PATH)
-
-            # Get number of classes
-            num_classes = len(label_map)
-            logger.info(f"Loading enhanced model with input_dim={input_dim}, num_classes={num_classes}")
-
-            # Initialize the model
-            model = EnhancedTwiSpeechModel(
-                input_dim=input_dim,
-                hidden_dim=128,
-                num_classes=num_classes,
-                dropout=0.3,
-                num_heads=8
-            )
-
-            # Load weights
-            checkpoint = torch.load(ENHANCED_MODEL_PATH, map_location=device)
-            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-                logger.info(f"Loaded enhanced model from checkpoint (epoch {checkpoint.get('epoch', 'unknown')})")
-
-                # Extract checkpoint info for metrics
-                checkpoint_info = {}
-                if 'config' in checkpoint:
-                    checkpoint_info = checkpoint['config']
-                if 'final_metrics' in checkpoint:
-                    checkpoint_info['final_metrics'] = checkpoint['final_metrics']
-            else:
-                model.load_state_dict(checkpoint)
-                logger.info("Loaded enhanced model weights")
-                checkpoint_info = {}
-
-            # Set to evaluation mode
-            model.to(device)
-            model.eval()
-
-            # Create custom classifier with the loaded model and processor
-            enhanced_classifier = {
-                'model': model,
-                'processor': get_enhanced_processor(),
-                'label_map': label_map,
-                'input_dim': input_dim,
-                'model_type': 'enhanced',
-                'checkpoint_info': checkpoint_info
-            }
-
-            logger.info("Enhanced model loaded successfully!")
-            return True
-        else:
-            logger.warning(f"Enhanced model not found at {ENHANCED_MODEL_PATH}")
-            return False
+        return load_label_map(LABEL_MAP_PATH)
     except Exception as e:
-        logger.error(f"Error loading enhanced model: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return False
+        logger.error(f"Failed to load label map from {LABEL_MAP_PATH}: {e}")
+        return {}
 
-def load_standard_model():
-    """Load standard IntentClassifier model"""
-    global classifier
-
-    try:
-        # Use standard model
-        processor = get_enhanced_processor()
-        classifier = IntentClassifier(
-            STANDARD_MODEL_PATH,
-            device,
-            processor=processor,
-            label_map_path=LABEL_MAP_PATH
-        )
-        logger.info("Standard model loaded successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Error loading standard model: {e}")
-        classifier = None
-        return False
-
-def preprocess_audio(audio_path, classifier_obj):
-    """Process audio with dimension adjustment to match model requirements"""
-    if isinstance(classifier_obj, dict):  # Enhanced model
-        # Get processor and expected input dimension
-        processor = classifier_obj['processor']
-        expected_input_dim = classifier_obj['input_dim']
-
-        # Extract features using the enhanced processor
-        features = processor.preprocess(audio_path)
-
-        # Adjust dimensions if needed
-        if features.shape[0] != expected_input_dim:
-            if features.shape[0] > expected_input_dim:
-                # Truncate features if we have too many
-                features = features[:expected_input_dim, :]
-            else:
-                # Pad features if we have too few
-                padding = np.zeros((expected_input_dim - features.shape[0], features.shape[1]))
-                features = np.vstack((features, padding))
-
-        # Convert to tensor and add batch dimension
-        features_tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0)  # Add batch dimension
-        return features_tensor
-    else:
-        # For standard classifier, use its internal processing
+def create_model(model_path: str, label_map: Dict[str, int]) -> Optional[ImprovedTwiSpeechModel]:
+    """Create and load model from file"""
+    if not os.path.exists(model_path):
+        logger.warning(f"Model file missing: {model_path}")
         return None
 
-def classify_with_enhanced_model(audio_path, classifier_obj):
-    """Classify audio using enhanced model"""
+    # Default input dimension for AudioProcessor with deltas
+    input_dim = 39  # 13 MFCC + 13 delta + 13 delta-delta
+
     try:
-        # Preprocess audio
-        features_tensor = preprocess_audio(audio_path, classifier_obj)
-
-        # Move tensor to device
-        if features_tensor is not None:
-            features_tensor = features_tensor.to(device)
-
-        # Get model and label map
-        model = classifier_obj['model']
-        label_map = classifier_obj['label_map']
-
-        # Get predictions
-        with torch.no_grad():
-            outputs = model(features_tensor)
-            probabilities = torch.softmax(outputs, dim=1)
-            confidence, predicted_idx = probabilities.max(1)
-
-        # Convert to intent
-        idx_to_label = {idx: label for label, idx in label_map.items()}
-        predicted_intent = idx_to_label[predicted_idx.item()]
-        confidence_value = confidence.item()
-
-        return predicted_intent, confidence_value
+        # Try to get from model metadata if available
+        model_dir = os.path.dirname(model_path)
+        results_path = os.path.join(model_dir, 'final_results.json')
+        if os.path.exists(results_path):
+            with open(results_path, 'r') as f:
+                results = json.load(f)
+                model_info = results.get('model_info', {})
+                input_dim = model_info.get('input_dim', input_dim)
+                logger.info(f"Loaded input_dim={input_dim} from training metadata")
     except Exception as e:
-        logger.error(f"Error classifying with enhanced model: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
+        logger.warning(f"Could not load training metadata: {e}, using default input_dim={input_dim}")
 
-def get_active_classifier():
-    """Get the currently active classifier, with preference for enhanced"""
+    # Create model with slot support
+    model = ImprovedTwiSpeechModel(
+        input_dim=input_dim,
+        hidden_dim=MODEL_CONFIG.get("hidden_dim", 128),
+        num_classes=len(label_map) if label_map else MODEL_CONFIG.get("num_classes", 47),
+        num_layers=MODEL_CONFIG.get("num_layers", 2),
+        dropout=MODEL_CONFIG.get("dropout", 0.5),
+        num_heads=MODEL_CONFIG.get("num_heads", 4),
+        num_slot_classes=0,  # No slot classification for API
+        slot_value_maps={}   # Empty slot maps for API
+    )
+
+    try:
+        # Load weights
+        checkpoint = torch.load(model_path, map_location=device)
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        else:
+            model.load_state_dict(checkpoint, strict=False)
+
+        model.to(device)
+        model.eval()
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load model from {model_path}: {e}")
+        return None
+
+def load_enhanced_model() -> bool:
+    """Load enhanced model"""
+    global enhanced_classifier
+
+    with _model_lock:
+        label_map = load_label_map_safe()
+        model = create_model(ENHANCED_MODEL_PATH, label_map)
+
+        if model is None:
+            enhanced_classifier = None
+            return False
+
+        enhanced_classifier = {
+            "model": model,
+            "processor": create_processor(),
+            "label_map": label_map,
+            "input_dim": getattr(model, "input_dim", None),
+            "model_type": "enhanced"
+        }
+
+        logger.info(f"Enhanced model loaded successfully from {ENHANCED_MODEL_PATH}")
+        return True
+
+def load_standard_model() -> bool:
+    """Load standard model"""
+    global standard_classifier
+
+    with _model_lock:
+        label_map = load_label_map_safe()
+        model = create_model(STANDARD_MODEL_PATH, label_map)
+
+        if model is None:
+            standard_classifier = None
+            return False
+
+        standard_classifier = {
+            "model": model,
+            "processor": create_processor(),
+            "label_map": label_map,
+            "input_dim": getattr(model, "input_dim", None),
+            "model_type": "standard"
+        }
+
+        logger.info(f"Standard model loaded successfully from {STANDARD_MODEL_PATH}")
+        return True
+
+def get_active_classifier() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Get active classifier with preference for enhanced"""
     if enhanced_classifier:
-        return enhanced_classifier, 'enhanced'
-    elif classifier:
-        return classifier, 'standard'
-    else:
-        return None, None
+        return enhanced_classifier, "enhanced"
+    if standard_classifier:
+        return standard_classifier, "standard"
+    return None, None
 
+# ---------------------------------------------------------------------------
+# Audio Processing Functions
+# ---------------------------------------------------------------------------
+def preprocess_audio(audio_path: str, classifier_obj: Dict[str, Any]) -> torch.Tensor:
+    """Preprocess audio file for model input"""
+    processor = classifier_obj["processor"]
+
+    # Extract features using AudioProcessor
+    features = processor.preprocess(audio_path)
+
+    # Handle variable length by padding/truncating to reasonable size
+    if features.shape[1] < 50:
+        pad_width = 50 - features.shape[1]
+        features = np.pad(features, ((0, 0), (0, pad_width)), mode='constant')
+    elif features.shape[1] > 200:
+        features = features[:, :200]
+
+    # Convert to tensor
+    tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(device)
+    return tensor
+
+def classify_audio(audio_path: str, classifier_obj: Dict[str, Any]) -> Tuple[str, float]:
+    """Classify audio file and return intent and confidence"""
+    tensor = preprocess_audio(audio_path, classifier_obj)
+    model = classifier_obj["model"]
+    label_map = classifier_obj["label_map"]
+
+    with torch.no_grad():
+        outputs = model(tensor)
+
+        # Handle tuple output from model (intent_logits, slot_logits)
+        if isinstance(outputs, tuple):
+            intent_logits = outputs[0]
+        else:
+            intent_logits = outputs
+
+        probs = torch.softmax(intent_logits, dim=1)
+        conf, idx = probs.max(1)
+
+    # Convert index to label
+    idx_to_label = {v: k for k, v in label_map.items()}
+    intent = idx_to_label.get(idx.item(), f"cls_{idx.item()}")
+
+    return intent, float(conf.item())
+
+# ---------------------------------------------------------------------------
+# Startup Event
+# ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup_event():
-    """Initialize components on startup"""
+    """Initialize models on startup"""
     global start_time
     start_time = time.time()
+
+    # Initialize paths first (reads environment variables set by app.py)
+    initialize_paths()
 
     # Try to load enhanced model first
     enhanced_loaded = load_enhanced_model()
 
-    # If enhanced model failed, load standard model
+    # If enhanced model failed, try standard model
     if not enhanced_loaded:
-        load_standard_model()
+        standard_loaded = load_standard_model()
+    else:
+        standard_loaded = True  # Enhanced model can serve as standard too
 
     # Check if any model was loaded
-    classifier_obj, model_type = get_active_classifier()
-    if classifier_obj:
-        logger.info(f"API started with {model_type} model")
+    clf, model_type = get_active_classifier()
+    if clf:
+        logger.info(f"API started successfully with {model_type} model")
     else:
-        logger.error("No models could be loaded. API will return errors for recognition requests.")
+        logger.error("No models could be loaded at startup!")
 
-@app.get("/", response_model=dict)
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/")
 async def root():
-    """API root endpoint"""
+    """Root endpoint"""
+    clf, model_type = get_active_classifier()
     return {
-        "message": "Akan (Twi) Speech-to-Action API is running",
-        "version": "1.1.0",
-        "model_type": "enhanced" if enhanced_classifier else "standard" if classifier else "none"
+        "message": "Akan (Twi) Speech-to-Action API",
+        "version": "1.2.0",
+        "model_type": model_type or "none",
+        "status": "running"
     }
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint with detailed status"""
-    classifier_obj, model_type = get_active_classifier()
+async def health():
+    """Health check endpoint"""
+    clf, model_type = get_active_classifier()
 
-    if not classifier_obj:
+    if not clf:
         return JSONResponse(
             status_code=503,
             content=HealthResponse(
@@ -295,107 +517,88 @@ async def health_check():
             ).dict()
         )
 
-    # Get number of available intents
-    num_intents = None
-    if model_type == 'enhanced':
-        if hasattr(classifier_obj, 'label_map') or (isinstance(classifier_obj, dict) and 'label_map' in classifier_obj):
-            if hasattr(classifier_obj, 'label_map'):
-                num_intents = len(classifier_obj.label_map)
-            else:
-                num_intents = len(classifier_obj['label_map'])
-
+    num_intents = len(clf.get("label_map", {}))
     return HealthResponse(
         status="healthy",
         model_loaded=True,
-        model_type=model_type if model_type is not None else "unknown",
+        model_type=model_type or "unknown",
         available_intents=num_intents
     )
 
 @app.post("/recognize", response_model=RecognitionResponse)
-async def recognize_speech(file: UploadFile = File(...)):
-    """
-    Recognize speech intent from audio file using the best available model
-
-    Args:
-        file: Audio file (WAV, MP3)
-
-    Returns:
-        Recognized intent and confidence score
-    """
+async def recognize(file: UploadFile = File(...)):
+    """Recognize speech intent from audio file"""
     global request_count, processing_times
     request_count += 1
-    classifier_obj, model_type = get_active_classifier()
 
-    if not classifier_obj:
-        raise HTTPException(status_code=503, detail="No speech recognition model is loaded")
+    clf, model_type = get_active_classifier()
+    if not clf:
+        raise HTTPException(status_code=503, detail="No model loaded")
 
-    # Check file type
-    if file.filename is None or not file.filename.lower().endswith(('.wav', '.mp3')):
-        raise HTTPException(status_code=400, detail="Only WAV and MP3 files are supported")
+    # Validate file
+    if not file.filename or not file.filename.lower().endswith((".wav", ".mp3", ".webm", ".ogg", ".m4a", ".aac", ".flac")):
+        raise HTTPException(status_code=400, detail="Audio format not supported. Please use WAV, MP3, WebM, OGG, M4A, AAC, or FLAC format.")
 
-    # Handle file size limit
     content = await file.read()
-    max_size = API_CONFIG.get("max_upload_size", 10 * 1024 * 1024)  # Default 10MB
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    max_size = API_CONFIG.get("max_upload_size", 10 * 1024 * 1024)
     if len(content) > max_size:
-        raise HTTPException(status_code=413, detail=f"File size exceeds the {max_size/1024/1024}MB limit")
+        raise HTTPException(status_code=413, detail="File too large")
 
+    tmp_path = None
     try:
-        # Create temporary file
-        suffix = os.path.splitext(file.filename or "audio.wav")[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            # Write uploaded file to temporary file
-            tmp.write(content)
-            tmp_path = tmp.name
+        # Convert audio bytes to WAV format using robust converter
+        tmp_path = convert_bytes_to_wav(content, file.filename or "audio.wav")
 
+        if not tmp_path:
+            raise HTTPException(status_code=400, detail="Failed to convert audio to supported format")
+
+        # Validate the converted audio
+        if not validate_audio_file(tmp_path):
+            raise HTTPException(status_code=400, detail="Converted audio file is invalid or corrupted")
+
+        # Process audio
         start_time_proc = time.time()
+        intent, confidence = classify_audio(tmp_path, clf)
+        proc_time_ms = (time.time() - start_time_proc) * 1000
 
-        # Process audio and predict intent based on model type
-        if model_type == 'enhanced':
-            intent, confidence = classify_with_enhanced_model(tmp_path, classifier_obj)
-        else:
-            # Use standard classifier
-            intent, confidence = classifier_obj.classify(tmp_path)
-
-        processing_time = (time.time() - start_time_proc) * 1000  # ms
-        processing_times.append(processing_time)
-
-        # Clean up temporary file
-        os.unlink(tmp_path)
+        processing_times.append(proc_time_ms)
 
         return RecognitionResponse(
-            filename=file.filename or "audio.wav",
+            filename=file.filename,
             intent=intent,
             confidence=confidence,
-            model_type=model_type if model_type is not None else "unknown",
-            processing_time_ms=processing_time
+            model_type=model_type or "unknown",
+            processing_time_ms=proc_time_ms
         )
 
     except Exception as e:
         logger.error(f"Error processing audio: {e}")
-        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+        if "Format not recognised" in str(e) or "NoBackendError" in str(e):
+            raise HTTPException(status_code=400, detail="Audio format not supported. Please use WAV, MP3, WebM, OGG, M4A, AAC, or FLAC format.")
+        elif "NaN" in str(e) or "Input X contains NaN" in str(e) or "not finite everywhere" in str(e):
+            raise HTTPException(status_code=400, detail="Audio processing failed. The audio may be corrupted, too short, or contains invalid data.")
+        elif "Audio buffer is not finite everywhere" in str(e):
+            raise HTTPException(status_code=400, detail="Audio contains invalid data (NaN or infinite values). Please check your recording.")
+        elif "divide by zero" in str(e) or "division by zero" in str(e):
+            raise HTTPException(status_code=400, detail="Audio processing failed due to silence or very low signal. Please record with more volume.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Error processing audio: {e}")
+
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
-        raise HTTPException(status_code=500, detail=f"Error processing audio: {str(e)}")
 
 @app.post("/action", response_model=ActionResponse)
 async def take_action(
     file: UploadFile = File(...),
-    user_id: str = Query(None, description="User ID for e-commerce actions")
+    user_id: str = Query(..., description="User ID for e-commerce actions")
 ):
-    """
-    Recognize speech and take appropriate e-commerce action
-
-    Args:
-        file: Audio file
-        user_id: User ID for e-commerce integration
-
-    Returns:
-        Action taken based on recognized intent
-    """
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required")
-
+    """Recognize speech and take e-commerce action"""
     # First recognize the speech
-    recognition_result = await recognize_speech(file)
+    recognition_result = await recognize(file)
 
     # Check confidence threshold
     if recognition_result.confidence < confidence_threshold:
@@ -403,12 +606,12 @@ async def take_action(
             recognition=recognition_result.dict(),
             action={
                 "status": "low_confidence",
-                "message": f"Intent recognition confidence below threshold ({confidence_threshold}). Please try again.",
+                "message": f"Confidence {recognition_result.confidence:.2f} below threshold {confidence_threshold}",
                 "confidence": recognition_result.confidence
             }
         )
 
-    # Take action based on the intent
+    # Execute e-commerce action
     try:
         action_result = ecommerce.execute_action(
             intent=recognition_result.intent,
@@ -423,73 +626,17 @@ async def take_action(
 
     except Exception as e:
         logger.error(f"Error executing action: {e}")
-        raise HTTPException(status_code=500, detail=f"Error executing action: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error executing action: {e}")
 
 @app.get("/intents")
 async def list_intents():
-    """List all available intents with descriptions"""
-    classifier_obj, model_type = get_active_classifier()
+    """List all available intents"""
+    clf, model_type = get_active_classifier()
+    if not clf:
+        raise HTTPException(status_code=503, detail="No model loaded")
 
-    if not classifier_obj:
-        raise HTTPException(status_code=503, detail="No speech recognition model is loaded")
-
-    # Extract intents based on model type
-    if model_type == 'enhanced':
-        if 'label_map' not in classifier_obj:
-            raise HTTPException(status_code=503, detail="Label map not available in enhanced model")
-        intents = list(classifier_obj['label_map'].keys())
-    else:
-        if not hasattr(classifier_obj, 'label_map') or classifier_obj.label_map is None:
-            raise HTTPException(status_code=503, detail="Label map not available in standard model")
-        intents = list(classifier_obj.label_map.keys())
-
-    # Add intent descriptions (this could be loaded from a separate file)
-    intent_descriptions = {
-        "purchase": "Purchase an item directly",
-        "add_to_cart": "Add an item to the shopping cart",
-        "search": "Search for items or products",
-        "remove_from_cart": "Remove an item from the cart",
-        "checkout": "Proceed to checkout",
-        "intent_to_buy": "Express intention to purchase",
-        "continue": "Continue with the current flow",
-        "go_back": "Return to the previous step",
-        "show_items": "Display available items",
-        "show_cart": "Show items in the cart",
-        "confirm_order": "Confirm the current order",
-        "make_payment": "Process payment for an order",
-        "ask_questions": "Ask questions about products",
-        "help": "Request help or customer support",
-        "cancel": "Cancel the current action",
-        "show_price_images": "Show prices and images of items",
-        "change_quantity": "Change quantity of an item",
-        "show_categories": "Display product categories",
-        "show_description": "Show description of an item",
-        "save_for_later": "Save an item for later purchase",
-        # New intents from comprehensive prompts
-        "select_color": "Select a color for an item",
-        "select_size": "Select a size for an item",
-        "change_color": "Change the color of an item",
-        "change_size": "Change the size of an item",
-        "change_order": "Modify or change an existing order",
-        "manage_address": "Manage delivery addresses",
-        "manage_profile": "Manage user profile and account settings",
-        "manage_notifications": "Manage notification preferences",
-        "apply_coupon": "Apply a coupon or discount code",
-        "remove_coupon": "Remove a coupon or discount code",
-        "track_order": "Track the status of an order",
-        "return_item": "Return a purchased item",
-        "exchange_item": "Exchange an item for another",
-        "view_wishlist": "View saved items in wishlist",
-        "clear_cart": "Clear all items from the cart"
-    }
-
-    # Format response with descriptions when available
-    result = []
-    for intent in intents:
-        result.append({
-            "intent": intent,
-            "description": intent_descriptions.get(intent, "No description available")
-        })
+    intents = list(clf["label_map"].keys())
+    result = [{"intent": intent, "description": "No description available"} for intent in intents]
 
     return {
         "intents": result,
@@ -497,332 +644,266 @@ async def list_intents():
         "model_type": model_type
     }
 
-
 @app.get("/model-info")
 async def model_info():
-    """Get detailed information about the active model"""
-    classifier_obj, model_type = get_active_classifier()
+    """Get detailed model information"""
+    clf, model_type = get_active_classifier()
+    if not clf:
+        raise HTTPException(status_code=503, detail="No model loaded")
 
-    if not classifier_obj:
-        raise HTTPException(status_code=503, detail="No speech recognition model is loaded")
-
-    if model_type == 'enhanced':
-        if isinstance(classifier_obj, dict):
-            info = {
-                "model_type": "enhanced",
-                "input_dim": classifier_obj.get('input_dim', 'unknown'),
-                "num_classes": len(classifier_obj.get('label_map', {})),
-                "processor_type": classifier_obj.get('processor').__class__.__name__ if classifier_obj.get('processor') else "unknown",
-                "feature_type": getattr(classifier_obj.get('processor', {}), 'feature_type', 'unknown')
-            }
-        else:
-            info = {
-                "model_type": "enhanced",
-                "input_dim": getattr(classifier_obj, 'input_dim', 'unknown'),
-                "num_classes": len(getattr(classifier_obj, 'label_map', {})),
-                "processor_type": getattr(classifier_obj, 'processor', None).__class__.__name__ if getattr(classifier_obj, 'processor', None) else "unknown",
-                "feature_type": getattr(getattr(classifier_obj, 'processor', {}), 'feature_type', 'unknown')
-            }
-
-        # Add training information if available
-        if 'checkpoint_info' in classifier_obj and classifier_obj['checkpoint_info']:
-            checkpoint = classifier_obj['checkpoint_info']
-            info["training"] = {
-                "hidden_dim": checkpoint.get('hidden_dim', 128),
-                "dropout": checkpoint.get('dropout', 0.3),
-                "num_heads": checkpoint.get('num_heads', 8)
-            }
-
-            # Add metrics if available
-            if 'final_metrics' in classifier_obj['checkpoint_info']:
-                metrics = classifier_obj['checkpoint_info']['final_metrics']
-                info["metrics"] = {
-                    "val_accuracy": metrics.get('val_acc', 'unknown'),
-                    "test_accuracy": metrics.get('test_acc', 'unknown')
-                }
-    else:
-        # Standard model info
-        info = {
-            "model_type": "standard",
-            "processor_type": classifier_obj.processor.__class__.__name__
-        }
-
-        if hasattr(classifier_obj, 'model') and classifier_obj.model:
-            model = classifier_obj.model
-            info["input_dim"] = getattr(model, 'input_dim', 'unknown')
-
-        if hasattr(classifier_obj, 'label_map') and classifier_obj.label_map:
-            info["num_classes"] = len(classifier_obj.label_map)
-
-    return info
-
-@app.get("/switch-model/{model_type}")
-async def switch_model(model_type: str):
-    """
-    Switch between available models (enhanced or standard)
-
-    Args:
-        model_type: Type of model to use - 'enhanced' or 'standard'
-
-    Returns:
-        Status of the model switch
-    """
-    global enhanced_classifier, classifier
-
-    if model_type not in ['enhanced', 'standard']:
-        raise HTTPException(status_code=400, detail="Model type must be 'enhanced' or 'standard'")
-
-    if model_type == 'enhanced':
-        # Try to load enhanced model if not already loaded
-        if not enhanced_classifier:
-            success = load_enhanced_model()
-            if not success:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Enhanced model couldn't be loaded. Check logs for details."
-                )
-        return {"status": "success", "active_model": "enhanced"}
-    else:
-        # Try to load standard model if not already loaded
-        if not classifier:
-            success = load_standard_model()
-            if not success:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Standard model couldn't be loaded. Check logs for details."
-                )
-        return {"status": "success", "active_model": "standard"}
-
-@app.post("/process-batch")
-async def process_batch(files: List[UploadFile] = File(...)):
-    """
-    Process multiple audio files in a batch
-
-    Args:
-        files: List of audio files
-
-    Returns:
-        Recognition results for each file
-    """
-    if len(files) > 10:  # Limit batch size
-        raise HTTPException(status_code=400, detail="Maximum batch size is 10 files")
-
-    results = []
-    for file in files:
-        try:
-            result = await recognize_speech(file)
-            results.append(result.dict())
-        except HTTPException as e:
-            # Include error information in results
-            results.append({
-                "filename": file.filename,
-                "error": e.detail,
-                "status_code": e.status_code
-            })
-        except Exception as e:
-            results.append({
-                "filename": file.filename,
-                "error": str(e),
-                "status_code": 500
-            })
-
-    return {"batch_results": results, "successful": len([r for r in results if "error" not in r])}
-
-@app.get("/metrics")
-async def get_metrics():
-    """Get model metrics and statistics"""
-    global request_count, start_time, processing_times
-
-    classifier_obj, model_type = get_active_classifier()
-
-    if not classifier_obj:
-        raise HTTPException(status_code=503, detail="No speech recognition model is loaded")
-
-    # Calculate runtime metrics
-    uptime_seconds = int(time.time() - start_time)
-    avg_processing_time = sum(processing_times) / len(processing_times) if processing_times else 0
-
-    # Basic metrics that apply to both model types
-    metrics = {
+    return {
         "model_type": model_type,
-        "uptime_seconds": uptime_seconds,
-        "total_requests": request_count,
-        "requests_per_minute": round(request_count / (uptime_seconds / 60), 2) if uptime_seconds > 0 else 0,
-        "avg_processing_time_ms": round(avg_processing_time, 2)
+        "input_dim": clf.get("input_dim"),
+        "num_classes": len(clf.get("label_map", {})),
+        "processor": clf.get("processor").__class__.__name__ if clf.get("processor") else None,
+        "model_path": ENHANCED_MODEL_PATH if model_type == "enhanced" else STANDARD_MODEL_PATH
     }
 
-    # Add model-specific metrics
-    if model_type == 'enhanced' and 'checkpoint_info' in classifier_obj:
-        checkpoint = classifier_obj['checkpoint_info']
-        if 'final_metrics' in checkpoint:
-            final_metrics = checkpoint['final_metrics']
-            metrics.update({
-                "validation_accuracy": final_metrics.get('val_acc', 'unknown'),
-                "test_accuracy": final_metrics.get('test_acc', 'unknown'),
-                "training_loss": final_metrics.get('train_loss', 'unknown')
-            })
+@app.get("/model-paths")
+async def model_paths():
+    """Get current model paths and candidates"""
+    def summarize(path: str):
+        return {
+            "path": path,
+            "exists": os.path.exists(path),
+            "size_bytes": os.path.getsize(path) if os.path.exists(path) and os.path.isfile(path) else None
+        }
 
-    return metrics
+    return {
+        "MODEL_BASE_DIR": MODEL_BASE_DIR or "(default)",
+        "resolved": {
+            "ENHANCED_MODEL_PATH": summarize(ENHANCED_MODEL_PATH),
+            "STANDARD_MODEL_PATH": summarize(STANDARD_MODEL_PATH),
+            "LABEL_MAP_PATH": summarize(LABEL_MAP_PATH),
+        },
+        "candidates": CANDIDATE_PATHS
+    }
 
-@app.post("/feedback")
-async def submit_feedback(
-    intent: str,
-    correct_intent: str,
-    audio_file: Optional[UploadFile] = File(None),
-    confidence: float = Query(None),
-    notes: Optional[str] = Query(None)
+@app.get("/metrics")
+async def metrics():
+    """Get API metrics"""
+    clf, model_type = get_active_classifier()
+    if not clf:
+        raise HTTPException(status_code=503, detail="No model loaded")
+
+    uptime = int(time.time() - start_time)
+    avg_ms = sum(processing_times) / len(processing_times) if processing_times else 0.0
+    rpm = round(request_count / (uptime / 60), 2) if uptime > 0 else 0.0
+
+    return {
+        "model_type": model_type,
+        "uptime_seconds": uptime,
+        "total_requests": request_count,
+        "requests_per_minute": rpm,
+        "avg_processing_time_ms": round(avg_ms, 2)
+    }
+
+@app.post("/reload-model")
+async def reload_model(
+    model_type: str = Query(..., description="Model type: 'enhanced' or 'standard'"),
+    model_path: Optional[str] = Query(None, description="Optional explicit model path")
 ):
-    """
-    Submit feedback for incorrect predictions to improve the model
+    """Reload a model"""
+    if model_type not in ("enhanced", "standard"):
+        raise HTTPException(status_code=400, detail="model_type must be 'enhanced' or 'standard'")
 
-    Args:
-        intent: The intent that was predicted
-        correct_intent: The correct intent that should have been predicted
-        audio_file: Optional audio file for retraining
-        confidence: Confidence score of the prediction
-        notes: Additional notes about the feedback
+    with _model_lock:
+        # Get previous labels for comparison
+        if model_type == "enhanced" and enhanced_classifier:
+            prev_labels = set(enhanced_classifier.get("label_map", {}).keys())
+        elif model_type == "standard" and standard_classifier:
+            prev_labels = set(standard_classifier.get("label_map", {}).keys())
+        else:
+            prev_labels = set()
 
-    Returns:
-        Status of the feedback submission
-    """
-    try:
-        # In a production system, you would store this feedback in a database
-        # for later analysis and model improvement
+        # Override path if provided
+        if model_path:
+            if not os.path.exists(model_path):
+                raise HTTPException(status_code=400, detail=f"Model path does not exist: {model_path}")
 
-        # For now, just log it
-        logger.info(
-            f"Feedback received: Predicted '{intent}' → Correct '{correct_intent}' "
-            f"(Confidence: {confidence})"
+            global ENHANCED_MODEL_PATH, STANDARD_MODEL_PATH
+            if model_type == "enhanced":
+                ENHANCED_MODEL_PATH = model_path
+            else:
+                STANDARD_MODEL_PATH = model_path
+
+        # Reload model
+        success = load_enhanced_model() if model_type == "enhanced" else load_standard_model()
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to reload {model_type} model")
+
+        # Get new labels
+        clf = enhanced_classifier if model_type == "enhanced" else standard_classifier
+        new_labels = set(clf.get("label_map", {}).keys()) if clf else set()
+
+        return {
+            "status": "success",
+            "model_type": model_type,
+            "reloaded": True,
+            "model_path": model_path or "(unchanged)",
+            "num_classes": len(new_labels),
+            "label_diff": {
+                "added": sorted(list(new_labels - prev_labels)),
+                "removed": sorted(list(prev_labels - new_labels)),
+                "unchanged": len(new_labels & prev_labels)
+            }
+        }
+
+@app.post("/configure-model-base")
+async def configure_model_base(
+    model_base_dir: Optional[str] = Query(None, description="New base directory"),
+    enhanced_path: Optional[str] = Query(None, description="Explicit enhanced model path"),
+    standard_path: Optional[str] = Query(None, description="Explicit standard model path"),
+    label_map_path: Optional[str] = Query(None, description="Explicit label map path")
+):
+    """Reconfigure model paths and reload"""
+    global MODEL_BASE_DIR
+
+    with _model_lock:
+        # Update base directory
+        if model_base_dir is not None:
+            MODEL_BASE_DIR = model_base_dir.strip().rstrip("/")
+
+        # Resolve new paths
+        resolved, candidates = resolve_model_paths(
+            MODEL_BASE_DIR,
+            explicit_enhanced=enhanced_path,
+            explicit_standard=standard_path,
+            explicit_label=label_map_path
         )
 
-        if audio_file:
-            # Save the audio file for later retraining
-            audio_dir = "data/feedback"
-            os.makedirs(audio_dir, exist_ok=True)
+        # Apply new paths
+        apply_resolved_paths(resolved, candidates)
 
-            timestamp = int(time.time())
-            file_path = os.path.join(
-                audio_dir,
-                f"feedback_{timestamp}_{correct_intent}.wav"
-            )
+        # Reload models
+        enhanced_ok = load_enhanced_model()
+        standard_ok = load_standard_model()
 
-            content = await audio_file.read()
-            with open(file_path, "wb") as f:
-                f.write(content)
+        # Determine active model
+        active = "enhanced" if enhanced_classifier else "standard" if standard_classifier else "none"
 
-            logger.info(f"Saved feedback audio to {file_path}")
+        return {
+            "status": "success",
+            "active_model": active,
+            "paths": resolved,
+            "candidates": candidates,
+            "enhanced_loaded": enhanced_ok,
+            "standard_loaded": standard_ok
+        }
 
-        # Save detailed feedback to a log file
-        feedback_log = os.path.join("data/feedback", "feedback_log.jsonl")
+# Additional utility endpoints for testing and debugging
+@app.post("/test-intent")
+async def test_intent(
+    file: UploadFile = File(...),
+    top_k: int = Query(5, ge=1, le=50, description="Number of top intents to return")
+):
+    """Test intent recognition with top-k results"""
+    clf, model_type = get_active_classifier()
+    if not clf:
+        raise HTTPException(status_code=503, detail="No model loaded")
 
-        with open(feedback_log, "a") as f:
-            feedback_entry = {
-                "timestamp": time.time(),
-                "predicted_intent": intent,
-                "correct_intent": correct_intent,
-                "confidence": confidence,
-                "notes": notes,
-                "has_audio": audio_file is not None
-            }
-            f.write(json.dumps(feedback_entry) + "\n")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
 
-        return {"status": "success", "message": "Feedback received and logged"}
+    if not file.filename or not file.filename.lower().endswith((".wav", ".mp3", ".webm", ".ogg", ".m4a", ".aac", ".flac")):
+        raise HTTPException(status_code=400, detail="Audio format not supported. Please use WAV, MP3, WebM, OGG, M4A, AAC, or FLAC format.")
+
+    tmp_path = None
+    try:
+        # Convert audio bytes to WAV format using robust converter
+        tmp_path = convert_bytes_to_wav(content, file.filename or "audio.wav")
+
+        if not tmp_path:
+            raise HTTPException(status_code=400, detail="Failed to convert audio to supported format. Please try a different audio file or check the audio format.")
+
+        # Validate the converted audio
+        if not validate_audio_file(tmp_path):
+            raise HTTPException(status_code=400, detail="Converted audio file is invalid, corrupted, or contains only silence. Please check your recording.")
+
+        # Additional validation - check file size
+        if os.path.getsize(tmp_path) == 0:
+            raise HTTPException(status_code=400, detail="Converted audio file is empty. Please check your recording.")
+
+        start_time_proc = time.time()
+        tensor = preprocess_audio(tmp_path, clf)
+
+        with torch.no_grad():
+            outputs = clf["model"](tensor)
+
+            # Handle tuple output from model (intent_logits, slot_logits)
+            if isinstance(outputs, tuple):
+                intent_logits = outputs[0]
+            else:
+                intent_logits = outputs
+
+            probs = torch.softmax(intent_logits, dim=1)
+            conf, idx = probs.max(1)
+
+        # Get top-k predictions
+        label_map = clf["label_map"]
+        idx_to_label = {v: k for k, v in label_map.items()}
+
+        k = min(top_k, probs.shape[1])
+        top_vals, top_idxs = torch.topk(probs, k)
+
+        top_predictions = []
+        for score, pred_idx in zip(top_vals[0], top_idxs[0]):
+            intent = idx_to_label.get(pred_idx.item(), f"cls_{pred_idx.item()}")
+            top_predictions.append({
+                "intent": intent,
+                "confidence": float(score.item())
+            })
+
+        primary_intent = idx_to_label.get(idx.item(), f"cls_{idx.item()}")
+        processing_time_ms = (time.time() - start_time_proc) * 1000
+
+        return {
+            "filename": file.filename,
+            "intent": primary_intent,
+            "confidence": float(conf.item()),
+            "top_predictions": top_predictions,
+            "model_type": model_type,
+            "processing_time_ms": processing_time_ms
+        }
 
     except Exception as e:
-        logger.error(f"Error processing feedback: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing feedback: {str(e)}")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Error in test_intent: {e}")
+        logger.error(f"Full traceback: {error_details}")
+
+        # Log additional debugging info
+        logger.error(f"Original filename: {file.filename}")
+        if tmp_path:
+            logger.error(f"Temporary file: {tmp_path}")
+            logger.error(f"Temp file exists: {os.path.exists(tmp_path) if tmp_path else 'N/A'}")
+            if tmp_path and os.path.exists(tmp_path):
+                logger.error(f"Temp file size: {os.path.getsize(tmp_path)} bytes")
+
+        if "Format not recognised" in str(e) or "NoBackendError" in str(e):
+            raise HTTPException(status_code=400, detail="Audio format not supported. Please use WAV, MP3, WebM, OGG, M4A, AAC, or FLAC format.")
+        elif "NaN" in str(e) or "Input X contains NaN" in str(e) or "not finite everywhere" in str(e):
+            raise HTTPException(status_code=400, detail="Audio processing failed. The audio may be corrupted, too short, or contains invalid data.")
+        elif "Audio buffer is not finite everywhere" in str(e):
+            raise HTTPException(status_code=400, detail="Audio contains invalid data (NaN or infinite values). Please check your recording.")
+        elif "divide by zero" in str(e) or "division by zero" in str(e):
+            raise HTTPException(status_code=400, detail="Audio processing failed due to silence or very low signal. Please record with more volume.")
+        elif "Failed to convert audio" in str(e):
+            raise HTTPException(status_code=400, detail="Failed to convert audio to supported format. Please try a different audio file or format.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Error processing audio: {e}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 @app.get("/reset-metrics")
 async def reset_metrics():
-    """Reset runtime metrics counters"""
+    """Reset API metrics"""
     global request_count, start_time, processing_times
 
     request_count = 0
     start_time = time.time()
     processing_times = []
 
-    return {"status": "success", "message": "Metrics reset successfully"}
-
-@app.post("/debug")
-async def debug_audio(file: UploadFile = File(...)):
-    """
-    Debug endpoint for audio processing - returns intermediate processing steps
-
-    Args:
-        file: Audio file to debug
-
-    Returns:
-        Detailed processing information
-    """
-    classifier_obj, model_type = get_active_classifier()
-
-    if not classifier_obj:
-        raise HTTPException(status_code=503, detail="No speech recognition model is loaded")
-
-    try:
-        # Save the uploaded file
-        content = await file.read()
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-
-        debug_info = {
-            "model_type": model_type,
-            "audio_info": {}
-        }
-
-        # Extract audio information
-        try:
-            audio, sr = sf.read(tmp_path)
-            debug_info["audio_info"] = {
-                "sample_rate": sr,
-                "duration": len(audio) / sr,
-                "channels": audio.shape[1] if len(audio.shape) > 1 else 1,
-                "min": float(np.min(audio)),
-                "max": float(np.max(audio)),
-                "rms": float(np.sqrt(np.mean(audio**2)))
-            }
-        except Exception as e:
-            debug_info["audio_info"]["error"] = str(e)
-
-        # Process features
-        if model_type == 'enhanced':
-            processor = classifier_obj['processor']
-            try:
-                features = processor.preprocess(tmp_path)
-                debug_info["features"] = {
-                    "shape": list(features.shape),
-                    "feature_type": processor.feature_type,
-                    "n_mfcc": processor.n_mfcc,
-                    "n_mels": processor.n_mels
-                }
-
-                # Adjust dimensions if needed
-                input_dim = classifier_obj['input_dim']
-                if features.shape[0] != input_dim:
-                    debug_info["dimension_mismatch"] = {
-                        "expected": input_dim,
-                        "actual": features.shape[0],
-                        "action": "adjust_dimensions"
-                    }
-
-                # Run inference - don't save the result, just for debugging
-                features_tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0)
-                features_tensor = features_tensor.to(device)
-                _ = classifier_obj['model'](features_tensor)
-                debug_info["inference"] = "successful"
-
-            except Exception as e:
-                debug_info["feature_extraction_error"] = str(e)
-                import traceback
-                debug_info["traceback"] = traceback.format_exc()
-
-        # Clean up temp file
-        os.unlink(tmp_path)
-
-        return debug_info
-
-    except Exception as e:
-        if 'tmp_path' in locals() and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
+    return {"status": "success", "message": "Metrics reset"}

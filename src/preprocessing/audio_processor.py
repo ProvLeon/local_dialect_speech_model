@@ -6,6 +6,7 @@ from pydub import AudioSegment
 import random
 import warnings
 from typing import Tuple, Optional, Callable, Dict, Any
+from src.utils.audio_converter import convert_audio_to_wav, validate_audio_file
 
 try:
     import torch
@@ -79,7 +80,8 @@ class AudioProcessor:
 
     def load_audio(self, file_path: str) -> Tuple[np.ndarray, int]:
         """
-        Load audio file and resample if necessary
+        Load audio file and convert to appropriate format.
+        Handles multiple formats robustly with conversion fallbacks.
 
         Args:
             file_path: Path to audio file
@@ -87,7 +89,42 @@ class AudioProcessor:
         Returns:
             Tuple of audio data and sample rate
         """
-        # Handle different file formats
+        # Try to convert to WAV format first for reliable loading
+        converted_path = convert_audio_to_wav(file_path)
+
+        if converted_path and validate_audio_file(converted_path):
+            try:
+                # Load the converted WAV file
+                audio, sr = librosa.load(converted_path, sr=self.sample_rate, mono=True)
+
+                # Clean up temporary file if it was created
+                if converted_path != file_path:
+                    import os
+                    try:
+                        os.unlink(converted_path)
+                    except:
+                        pass
+
+                # Validate loaded audio
+                if len(audio) == 0:
+                    raise ValueError("Loaded audio is empty")
+
+                if not np.isfinite(audio).all():
+                    raise ValueError("Audio contains non-finite values")
+
+                return audio, int(sr)
+
+            except Exception as e:
+                # Clean up on error
+                if converted_path and converted_path != file_path:
+                    import os
+                    try:
+                        os.unlink(converted_path)
+                    except:
+                        pass
+                raise e
+
+        # Fallback to original method if conversion fails
         if file_path.endswith('.mp3'):
             audio = AudioSegment.from_mp3(file_path)
             audio = audio.set_channels(1)  # Convert to mono
@@ -183,12 +220,19 @@ class AudioProcessor:
         # Compute magnitude
         mag = np.abs(D)
 
-        # Estimate noise floor
+        # Estimate noise floor (with safety checks)
         noise_floor = np.mean(np.sort(mag, axis=1)[:, :int(mag.shape[1]*0.1)], axis=1)
         noise_floor = noise_floor.reshape(-1, 1)
 
-        # Apply soft mask
-        mask = 1 - 1 / (1 + np.power(mag / (noise_floor * n_grad), 2))
+        # Prevent division by zero
+        noise_floor = np.maximum(noise_floor, 1e-10)
+        n_grad = max(n_grad, 1e-10)
+
+        # Apply soft mask (with safety checks)
+        ratio = mag / (noise_floor * n_grad)
+        ratio = np.clip(ratio, 1e-10, 1e10)  # Prevent extreme values
+        mask = 1 - 1 / (1 + np.power(ratio, 2))
+        mask = np.clip(mask, 0, 1)  # Ensure mask is in valid range
 
         # Apply mask to spectrogram
         D_denoised = D * mask

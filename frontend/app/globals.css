@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+:root {
+    /* Base (Light) Palette in HSL (for easy theming & alpha layering) */
+    --background: 0 0% 100%;
+    --foreground: 224 71.4% 4.1%;
+
+    /* Semantic Surface Tokens */
+    --surface: 0 0% 98%;
+    --surface-alt: 210 20% 97%;
+    --surface-hover: 210 14% 93%;
+    --surface-inset: 220 18% 90%;
+
+    /* Border / Outline */
+    --border: 214.3 31.8% 91.4%;
+    --border-strong: 215 27% 84%;
+
+    /* Brand / Accent & Status */
+    --accent: 262 83% 58%;
+    --accent-foreground: 0 0% 100%;
+    --accent-alt: 285 80% 60%;
+    --ok: 142 76% 36%;
+    --warn: 43 96% 56%;
+    --danger: 0 72% 51%;
+    --info: 199 89% 48%;
+
+    /* Neutral Scales */
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 45%;
+
+    /* Typography / Radii / Shadows */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 16px;
+    --shadow-color: 262 60% 10%;
+
+    /* Gradients */
+    --gradient-accent: linear-gradient(135deg, hsl(262 83% 62%), hsl(285 80% 60%));
+    --gradient-bg: radial-gradient(circle at 20% 20%, rgba(120, 119, 198, 0.12), transparent 60%);
+
+    /* Convenience Wrapped Tokens */
+    --color-bg: hsl(var(--background));
+    --color-fg: hsl(var(--foreground));
+    --color-surface: hsl(var(--surface));
+    --color-border: hsl(var(--border));
+    --color-accent: hsl(var(--accent));
+    --color-accent-alt: hsl(var(--accent-alt));
+    --color-danger: hsl(var(--danger));
+    --color-warn: hsl(var(--warn));
+    --color-ok: hsl(var(--ok));
+    --color-info: hsl(var(--info));
+}
+
+@theme inline {
+    /* Map semantic tokens to Tailwind-style custom properties */
+    --color-background: var(--color-bg);
+    --color-foreground: var(--color-fg);
+    --color-surface: var(--color-surface);
+    --color-border: var(--color-border);
+    --color-accent: var(--color-accent);
+    --color-danger: var(--color-danger);
+    --color-warn: var(--color-warn);
+    --color-ok: var(--color-ok);
+    --color-info: var(--color-info);
+
+    --font-sans: var(--font-geist-sans);
+    --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* Dark Mode Base */
+        --background: 224 35% 6%;
+        --foreground: 210 40% 96%;
+
+        --surface: 224 32% 12%;
+        --surface-alt: 224 28% 16%;
+        --surface-hover: 224 28% 20%;
+        --surface-inset: 224 26% 22%;
+
+        --border: 224 25% 22%;
+        --border-strong: 224 30% 28%;
+
+        --accent: 267 83% 70%;
+        --accent-foreground: 0 0% 100%;
+        --accent-alt: 285 70% 68%;
+
+        --muted: 224 24% 18%;
+        --muted-foreground: 224 15% 65%;
+
+        --ok: 142 70% 45%;
+        --warn: 43 96% 62%;
+        --danger: 0 82% 60%;
+        --info: 199 89% 54%;
+
+        --gradient-bg: radial-gradient(circle at 20% 20%, rgba(120, 119, 198, 0.22), rgba(45, 15, 89, 0.1) 70%);
+
+        /* Re-map convenience wrappers (kept same variable names) */
+        --color-bg: hsl(var(--background));
+        --color-fg: hsl(var(--foreground));
+        --color-surface: hsl(var(--surface));
+        --color-border: hsl(var(--border));
+        --color-accent: hsl(var(--accent));
+        --color-accent-alt: hsl(var(--accent-alt));
+        --color-danger: hsl(var(--danger));
+        --color-warn: hsl(var(--warn));
+        --color-ok: hsl(var(--ok));
+        --color-info: hsl(var(--info));
+    }
+}
+
+body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: Arial, Helvetica, sans-serif;
+}

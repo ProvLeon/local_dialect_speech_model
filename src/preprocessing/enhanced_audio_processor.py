@@ -30,19 +30,41 @@ class EnhancedAudioProcessor:
 
     def load_audio(self, file_path: str) -> Tuple[np.ndarray, int]:
         """Load and normalize audio file"""
-        # Handle different file formats
-        if file_path.endswith('.mp3'):
-            audio = AudioSegment.from_mp3(file_path)
-            audio = audio.set_channels(1)  # Convert to mono
-            audio = audio.set_frame_rate(self.sample_rate)
-            samples = np.array(audio.get_array_of_samples())
-            # Normalize to [-1, 1]
-            audio_data = samples.astype(np.float32) / 32768.0
-            return audio_data, self.sample_rate
-        else:
-            # Use librosa for wav and other formats
-            audio, sr = librosa.load(file_path, sr=self.sample_rate, mono=True)
-            return audio, int(sr)
+        try:
+            # Handle different file formats
+            if file_path.endswith('.mp3'):
+                audio = AudioSegment.from_mp3(file_path)
+                audio = audio.set_channels(1)  # Convert to mono
+                audio = audio.set_frame_rate(self.sample_rate)
+                samples = np.array(audio.get_array_of_samples())
+                # Normalize to [-1, 1]
+                audio_data = samples.astype(np.float32) / 32768.0
+                return audio_data, self.sample_rate
+            elif file_path.endswith('.webm') or 'webm' in file_path.lower():
+                # Handle WebM format from browser recordings
+                try:
+                    # Try using pydub to convert WebM
+                    audio = AudioSegment.from_file(file_path, format="webm")
+                    audio = audio.set_channels(1)  # Convert to mono
+                    audio = audio.set_frame_rate(self.sample_rate)
+                    samples = np.array(audio.get_array_of_samples())
+                    # Normalize to [-1, 1]
+                    audio_data = samples.astype(np.float32) / 32768.0
+                    return audio_data, self.sample_rate
+                except Exception as e:
+                    print(f"WebM conversion failed with pydub: {e}")
+                    # Fallback to librosa
+                    audio, sr = librosa.load(file_path, sr=self.sample_rate, mono=True)
+                    return audio, int(sr)
+            else:
+                # Use librosa for wav and other formats
+                audio, sr = librosa.load(file_path, sr=self.sample_rate, mono=True)
+                return audio, int(sr)
+        except Exception as e:
+            print(f"Error loading audio file {file_path}: {e}")
+            # Return silent audio as fallback
+            silent_audio = np.zeros(int(self.sample_rate * 0.1))  # 0.1 second of silence
+            return silent_audio, self.sample_rate
 
     def apply_augmentation(self, audio: np.ndarray) -> np.ndarray:
         """Apply random augmentations to the audio signal"""
@@ -110,36 +132,50 @@ class EnhancedAudioProcessor:
         mfcc_features = np.vstack((mfccs, mfcc_delta, mfcc_delta2))
         features['mfcc'] = mfcc_features
 
-        # Calculate Mel spectrogram features
-        mel_spec = librosa.feature.melspectrogram(
-            y=audio,
-            sr=self.sample_rate,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            n_mels=self.n_mels
-        )
+        # Calculate Mel spectrogram features with error handling
+        try:
+            mel_spec = librosa.feature.melspectrogram(
+                y=audio,
+                sr=self.sample_rate,
+                n_fft=min(self.n_fft, len(audio)),
+                hop_length=self.hop_length,
+                n_mels=self.n_mels
+            )
+            # Convert to dB scale
+            mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+            features['melspec'] = mel_spec_db
+        except Exception as e:
+            print(f"Mel spectrogram extraction failed: {e}")
+            # Fallback to zeros with same shape as MFCC
+            features['melspec'] = np.zeros_like(mfcc_features[:self.n_mels])
 
-        # Convert to dB scale
-        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-        features['melspec'] = mel_spec_db
+        # Calculate spectral contrast with error handling
+        try:
+            contrast = librosa.feature.spectral_contrast(
+                y=audio,
+                sr=self.sample_rate,
+                n_fft=min(self.n_fft, len(audio)),
+                hop_length=self.hop_length
+            )
+            features['contrast'] = contrast
+        except Exception as e:
+            print(f"Spectral contrast extraction failed: {e}")
+            # Fallback to zeros
+            features['contrast'] = np.zeros((7, mfcc_features.shape[1]))
 
-        # Calculate spectral contrast
-        contrast = librosa.feature.spectral_contrast(
-            y=audio,
-            sr=self.sample_rate,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length
-        )
-        features['contrast'] = contrast
-
-        # Calculate chroma features (useful for tonal content)
-        chroma = librosa.feature.chroma_stft(
-            y=audio,
-            sr=self.sample_rate,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length
-        )
-        features['chroma'] = chroma
+        # Calculate chroma features with error handling
+        try:
+            chroma = librosa.feature.chroma_stft(
+                y=audio,
+                sr=self.sample_rate,
+                n_fft=min(self.n_fft, len(audio)),
+                hop_length=self.hop_length
+            )
+            features['chroma'] = chroma
+        except Exception as e:
+            print(f"Chroma extraction failed: {e}")
+            # Fallback to zeros
+            features['chroma'] = np.zeros((12, mfcc_features.shape[1]))
 
         # Combined features for better performance
         if self.feature_type == 'combined':
@@ -167,6 +203,13 @@ class EnhancedAudioProcessor:
         """
         # Load audio
         audio, _ = self.load_audio(file_path)
+
+        # Check minimum audio length
+        min_samples = self.n_fft  # Minimum samples needed for STFT
+        if len(audio) < min_samples:
+            # Pad short audio with zeros
+            padding_needed = min_samples - len(audio)
+            audio = np.pad(audio, (0, padding_needed), mode='constant', constant_values=0)
 
         # Apply optional augmentations
         audio = self.apply_augmentation(audio)
@@ -211,38 +254,68 @@ class EnhancedAudioProcessor:
 
     def _reduce_noise(self, audio: np.ndarray) -> np.ndarray:
         """Enhanced noise reduction using spectral gating with refinements"""
-        # Compute spectrogram
-        D = librosa.stft(audio, n_fft=self.n_fft, hop_length=self.hop_length)
+        try:
+            # Check for valid audio
+            if len(audio) == 0 or np.all(audio == 0):
+                return audio
 
-        # Compute magnitude
-        mag = np.abs(D)
+            # Compute spectrogram
+            D = librosa.stft(audio, n_fft=self.n_fft, hop_length=self.hop_length)
 
-        # Improved noise floor estimation
-        # Use the lowest 10% of energy frames as noise reference
-        noise_floor = np.mean(np.sort(mag, axis=1)[:, :int(mag.shape[1]*0.1)], axis=1)
-        noise_floor = noise_floor.reshape(-1, 1)
+            # Compute magnitude
+            mag = np.abs(D)
 
-        # Apply refined soft mask with smoother transition
-        mask = 1 - 1 / (1 + np.power(mag / (noise_floor * 2), 2))
+            # Check for valid magnitude
+            if mag.size == 0 or np.all(mag == 0):
+                return audio
 
-        # Apply time-frequency smoothing to the mask
-        mask = librosa.decompose.nn_filter(
-            mask,
-            aggregate=np.median,
-            metric='cosine',
-            width=1
-        )
+            # Improved noise floor estimation with safety checks
+            # Use the lowest 10% of energy frames as noise reference
+            sorted_mag = np.sort(mag, axis=1)
+            noise_samples = max(1, int(mag.shape[1] * 0.1))
+            noise_floor = np.mean(sorted_mag[:, :noise_samples], axis=1)
+            noise_floor = noise_floor.reshape(-1, 1)
 
-        # Apply mask to spectrogram
-        D_denoised = D * mask
+            # Prevent division by zero and ensure minimum noise floor
+            noise_floor = np.maximum(noise_floor, 1e-10)
 
-        # Convert back to time domain
-        audio_denoised = librosa.istft(D_denoised, hop_length=self.hop_length)
+            # Apply refined soft mask with smoother transition, avoiding division by zero
+            denominator = noise_floor * 2
+            ratio = np.divide(mag, denominator, out=np.zeros_like(mag), where=denominator!=0)
+            mask = 1 - 1 / (1 + np.power(ratio, 2))
 
-        # Trim silent parts
-        audio_denoised, _ = librosa.effects.trim(audio_denoised, top_db=20)
+            # Replace any NaN or inf values
+            mask = np.nan_to_num(mask, nan=0.0, posinf=1.0, neginf=0.0)
 
-        return audio_denoised
+            # Check if mask is valid for further processing
+            if np.all(np.isfinite(mask)) and mask.size > 0:
+                try:
+                    # Apply time-frequency smoothing to the mask
+                    mask = librosa.decompose.nn_filter(
+                        mask,
+                        aggregate=np.median,
+                        metric='cosine',
+                        width=1
+                    )
+                except (ValueError, np.linalg.LinAlgError):
+                    # If smoothing fails, use unsmoothed mask
+                    pass
+
+            # Apply mask to spectrogram
+            D_denoised = D * mask
+
+            # Convert back to time domain
+            audio_denoised = librosa.istft(D_denoised, hop_length=self.hop_length)
+
+            # Trim silent parts
+            audio_denoised, _ = librosa.effects.trim(audio_denoised, top_db=20)
+
+            return audio_denoised
+
+        except Exception as e:
+            print(f"Noise reduction failed: {e}")
+            # Return original audio if noise reduction fails
+            return audio
 
     def _normalize_features(self, features: np.ndarray) -> np.ndarray:
         """Normalize features using mean and standard deviation"""

@@ -107,7 +107,16 @@ class Model47ClassTester:
 
         # Create reverse mapping
         self.idx_to_label = {v: k for k, v in label_map.items()}
-        logger.info(f"Loaded {len(label_map)} classes")
+        loaded_classes = len(label_map)
+        logger.info(f"Loaded {loaded_classes} classes")
+
+        # If the loaded label map size doesn't match the configured num_classes, adjust dynamically
+        if loaded_classes != self.num_classes:
+            logger.warning(
+                f"num_classes mismatch: config/model_info has {self.num_classes}, "
+                f"label_map has {loaded_classes}. Updating num_classes to {loaded_classes}."
+            )
+            self.num_classes = loaded_classes
 
         return label_map
 
@@ -136,7 +145,24 @@ class Model47ClassTester:
             else:
                 state_dict = checkpoint
 
-            model.load_state_dict(state_dict, strict=False)
+            # Defensive loading: handle classifier dimension mismatch gracefully
+            classifier_weight_key = 'intent_classifier.weight'
+            classifier_bias_key = 'intent_classifier.bias'
+            if (classifier_weight_key in state_dict and
+                state_dict[classifier_weight_key].shape[0] != self.num_classes):
+                ckpt_classes = state_dict[classifier_weight_key].shape[0]
+                logger.warning(
+                    f"Classifier size mismatch (checkpoint={ckpt_classes}, current={self.num_classes}). "
+                    "Removing incompatible classifier weights and reinitializing."
+                )
+                state_dict.pop(classifier_weight_key, None)
+                state_dict.pop(classifier_bias_key, None)
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                logger.info(f"Loaded with missing keys (reinitialized): {missing}; unexpected keys: {unexpected}")
+            else:
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                if missing or unexpected:
+                    logger.info(f"Loaded with missing keys: {missing}; unexpected keys: {unexpected}")
             model.to(self.device)
             model.eval()
             logger.info("Model loaded successfully!")

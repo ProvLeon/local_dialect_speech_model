@@ -43,23 +43,22 @@ class Model47ClassTester:
         # Load model info from the training results
         model_dir = os.path.dirname(model_path)
 
-        # Try to load model info from final_results.json
+        # Load label map first to get the correct number of classes
+        self.label_map = self.load_label_map(label_map_path or os.path.join(model_dir, '../../../processed/label_map.json'))
+        self.num_classes = len(self.label_map)
+
+        # Try to load model info from final_results.json for other parameters
         results_path = os.path.join(model_dir, 'final_results.json')
         if os.path.exists(results_path):
             with open(results_path, 'r') as f:
                 results = json.load(f)
                 model_info = results.get('model_info', {})
                 self.input_dim = model_info.get('input_dim', 39)
-                self.num_classes = model_info.get('num_classes', 47)
         else:
             # Default values
             self.input_dim = 39
-            self.num_classes = 47
 
         logger.info(f"Model config: input_dim={self.input_dim}, num_classes={self.num_classes}")
-
-        # Load label map
-        self.label_map = self.load_label_map(label_map_path or os.path.join(model_dir, '../../../processed/label_map.json'))
 
         # Create and load model
         self.model = self.load_model(model_path)
