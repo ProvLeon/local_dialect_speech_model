@@ -3,24 +3,79 @@ import librosa
 import numpy as np
 import soundfile as sf
 from pydub import AudioSegment
-# import os
-from typing import Tuple, Optional
+import random
+import warnings
+from typing import Tuple, Optional, Callable, Dict, Any
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except Exception:
+    TORCH_AVAILABLE = False
+    warnings.warn("Torch not available: waveform-domain augmentations disabled.")
 
 class AudioProcessor:
-    def __init__(self, sample_rate=16000, n_mfcc=13, n_fft=2048, hop_length=512):
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        n_mfcc: int = 13,
+        n_fft: int = 2048,
+        hop_length: int = 512,
+        enable_deltas: bool = True,
+        enable_audio_augment: bool = False,
+        enable_spec_augment: bool = False,
+        spec_time_masks: int = 2,
+        spec_time_width: int = 50,
+        spec_freq_masks: int = 2,
+        spec_freq_width: int = 6,
+        augment_config: Optional[Dict[str, Any]] = None
+    ):
         """
-        Initialize audio processor with parameters
+        Initialize audio processor with parameters & optional augmentation.
 
         Args:
             sample_rate: Target sample rate
             n_mfcc: Number of MFCCs to extract
             n_fft: FFT window size
             hop_length: Hop length for feature extraction
+            enable_deltas: If True include delta + delta-delta (triples channels)
+            enable_audio_augment: Apply waveform-domain augmentation (time stretch, noise, gain)
+            enable_spec_augment: Apply SpecAugment masking on feature matrix
+            spec_time_masks: Number of time masks
+            spec_time_width: Max width in frames for each time mask
+            spec_freq_masks: Number of frequency masks
+            spec_freq_width: Max width in bins for each frequency mask
+            augment_config: Dict overriding default augmentation probabilities / ranges
         """
         self.sample_rate = sample_rate
         self.n_mfcc = n_mfcc
         self.n_fft = n_fft
         self.hop_length = hop_length
+        self.enable_deltas = enable_deltas
+        self.enable_audio_augment = enable_audio_augment
+        self.enable_spec_augment = enable_spec_augment
+        self.spec_time_masks = spec_time_masks
+        self.spec_time_width = spec_time_width
+        self.spec_freq_masks = spec_freq_masks
+        self.spec_freq_width = spec_freq_width
+
+        # Default augmentation config
+        default_aug = {
+            "p_time_stretch": 0.35,
+            "time_stretch_min": 0.9,
+            "time_stretch_max": 1.1,
+            "p_pitch_shift": 0.30,
+            "pitch_semitones": 2,
+            "p_noise": 0.50,
+            "noise_min": 0.003,
+            "noise_max": 0.02,
+            "p_gain": 0.30,
+            "gain_min": 0.7,
+            "gain_max": 1.4
+        }
+        if augment_config:
+            default_aug.update(augment_config)
+        self.augment_config = default_aug
 
     def load_audio(self, file_path: str) -> Tuple[np.ndarray, int]:
         """
@@ -46,13 +101,7 @@ class AudioProcessor:
 
     def extract_mfcc(self, audio: np.ndarray) -> np.ndarray:
         """
-        Extract MFCC features from audio
-
-        Args:
-            audio: Audio signal
-
-        Returns:
-            MFCC features
+        Extract MFCC (with optional delta / delta-delta) features.
         """
         mfcc = librosa.feature.mfcc(
             y=audio,
@@ -61,44 +110,56 @@ class AudioProcessor:
             n_fft=self.n_fft,
             hop_length=self.hop_length
         )
+        if not self.enable_deltas:
+            return mfcc
         # Add delta and delta-delta features
-        mfcc_delta = librosa.feature.delta(mfcc)
-        mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
-
-        # Stack features
-        features = np.vstack((mfcc, mfcc_delta, mfcc_delta2))
-
+        try:
+            mfcc_delta = librosa.feature.delta(mfcc)
+            mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
+            features = np.vstack((mfcc, mfcc_delta, mfcc_delta2))
+        except Exception:
+            # Fallback silently if delta computation fails
+            features = mfcc
         return features
 
     def preprocess(self, file_path: str, max_length: Optional[int] = None) -> np.ndarray:
         """
-        Complete preprocessing pipeline
-
-        Args:
-            file_path: Path to audio file
-            max_length: Maximum length of features (for padding/truncation)
-
-        Returns:
-            Preprocessed features
+        Complete preprocessing pipeline:
+          1. Load
+          2. Optional waveform augmentation
+          3. Noise reduction
+          4. MFCC (+ optional deltas)
+          5. Normalize
+          6. Optional SpecAugment (masking)
+          7. Pad / truncate
         """
         # Load audio
         audio, _ = self.load_audio(file_path)
 
-        # Apply noise reduction
+        # Waveform augment (only if enabled)
+        if self.enable_audio_augment:
+            audio = self._augment_waveform(audio)
+
+        # Apply noise reduction (lightweight)
         audio = self._reduce_noise(audio)
 
-        # Extract MFCCs
+        # Extract MFCC-based features
         features = self.extract_mfcc(audio)
 
-        # Normalize features
+        # Normalize features (channel-wise)
         features = self._normalize_features(features)
 
-        # Pad or truncate if max_length is specified
+        # SpecAugment (mask on time / freq axes) - works in-place on numpy
+        if self.enable_spec_augment:
+            features = self._spec_augment(features)
+
+        # Pad or truncate
         if max_length is not None:
-            if features.shape[1] > max_length:
+            T = features.shape[1]
+            if T > max_length:
                 features = features[:, :max_length]
-            elif features.shape[1] < max_length:
-                padding = np.zeros((features.shape[0], max_length - features.shape[1]))
+            elif T < max_length:
+                padding = np.zeros((features.shape[0], max_length - T))
                 features = np.hstack((features, padding))
 
         return features
@@ -139,27 +200,75 @@ class AudioProcessor:
 
     def _normalize_features(self, features: np.ndarray) -> np.ndarray:
         """
-        Normalize features using mean and std
-
-        Args:
-            features: Feature matrix
-
-        Returns:
-            Normalized features
+        Per-channel standardization.
         """
-        # Normalize each feature independently
         mean = np.mean(features, axis=1, keepdims=True)
         std = np.std(features, axis=1, keepdims=True) + 1e-5
-        normalized = (features - mean) / std
-
-        return normalized
+        return (features - mean) / std
 
     def save_processed_audio(self, audio: np.ndarray, output_path: str):
         """
         Save processed audio to file
-
-        Args:
-            audio: Audio data
-            output_path: Path to save file
         """
         sf.write(output_path, audio, self.sample_rate)
+
+    # ---------------- Internal Augmentation Helpers ---------------- #
+
+    def _augment_waveform(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Apply simple waveform-domain augmentations (time stretch, pitch shift, noise, gain).
+        Executed with probabilities defined in self.augment_config.
+        """
+        cfg = self.augment_config
+        # Time stretch
+        if random.random() < cfg["p_time_stretch"]:
+            rate = random.uniform(cfg["time_stretch_min"], cfg["time_stretch_max"])
+            try:
+                audio = librosa.effects.time_stretch(audio, rate)
+            except Exception:
+                pass
+        # Pitch shift
+        if random.random() < cfg["p_pitch_shift"]:
+            steps = random.uniform(-cfg["pitch_semitones"], cfg["pitch_semitones"])
+            try:
+                audio = librosa.effects.pitch_shift(audio, sr=self.sample_rate, n_steps=steps)
+            except Exception:
+                pass
+        # Add noise
+        if random.random() < cfg["p_noise"]:
+            noise_amp = random.uniform(cfg["noise_min"], cfg["noise_max"])
+            noise = np.random.randn(len(audio)) * noise_amp
+            audio = audio + noise
+        # Gain
+        if random.random() < cfg["p_gain"]:
+            gain = random.uniform(cfg["gain_min"], cfg["gain_max"])
+            audio = audio * gain
+        # Clip to safe range
+        if audio.size:
+            mx = np.max(np.abs(audio))
+            if mx > 1.0:
+                audio = audio / (mx + 1e-6)
+        return audio
+
+    def _spec_augment(self, feats: np.ndarray) -> np.ndarray:
+        """
+        Apply SpecAugment-style masking (in-place safe copy).
+        feats: (C, T)
+        """
+        C, T = feats.shape
+        out = feats.copy()
+        # Time masks
+        for _ in range(self.spec_time_masks):
+            w = random.randint(5, self.spec_time_width)
+            if w >= T:
+                continue
+            t0 = random.randint(0, T - w)
+            out[:, t0:t0 + w] = 0
+        # Frequency masks
+        for _ in range(self.spec_freq_masks):
+            w = random.randint(2, self.spec_freq_width)
+            if w >= C:
+                continue
+            f0 = random.randint(0, C - w)
+            out[f0:f0 + w, :] = 0
+        return out

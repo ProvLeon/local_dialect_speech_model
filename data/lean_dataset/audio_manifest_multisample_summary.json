@@ -1,14 +1,18 @@
 {
   "total_prompts": 109,
-  "participants": 2,
+  "participants": 6,
   "participant_ids": [
     "P01",
-    "P02"
+    "P02",
+    "P03",
+    "P04",
+    "P05",
+    "P06"
   ],
-  "total_audio_instances": 344,
-  "prompts_with_any_audio": 106,
-  "coverage_pct": 97.25,
-  "avg_samples_per_prompt_per_participant": 1.623,
+  "total_audio_instances": 1230,
+  "prompts_with_any_audio": 109,
+  "coverage_pct": 100.0,
+  "avg_samples_per_prompt_per_participant": 1.916,
   "min_samples_per_prompt_participant": 1,
-  "max_samples_per_prompt_participant": 2
+  "max_samples_per_prompt_participant": 4
 }

@@ -5,6 +5,7 @@ import argparse
 import logging
 import uvicorn
 from dotenv import load_dotenv
+from src.api.speech_api import app
 
 # Load environment variables
 load_dotenv()
@@ -18,8 +19,6 @@ logger = logging.getLogger(__name__)
 
 def run_api_server(host="0.0.0.0", port=8000):
     """Run the FastAPI server"""
-    from src.api.speech_api import app
-
     logger.info(f"Starting API server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

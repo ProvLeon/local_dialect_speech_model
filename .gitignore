@@ -23,3 +23,6 @@ util/
 *.zip
 recordings*
 raw_backup*
+*models*
+results/*
+logs/*

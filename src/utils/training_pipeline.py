@@ -8,13 +8,43 @@ import logging
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from ..features.feature_extractor import TwiDataset
-from ..models.speech_model import ImprovedTwiSpeechModel, ImprovedTrainer
+from ..models.speech_model import ImprovedTwiSpeechModel
 from ..preprocessing.enhanced_audio_processor import EnhancedAudioProcessor
 import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def _collate_strip_slots(batch):
+    """Collate function that strips slot dictionaries and pads variable-length features"""
+    import torch
+    import torch.nn.functional as F
+    feats, labs = [], []
+    for sample in batch:
+        if len(sample) == 3:
+            f, l, _ = sample
+        else:
+            f, l = sample
+        feats.append(f)
+        labs.append(l)
+
+    # Find max temporal length (assuming features are [channels, time])
+    max_time = max(f.shape[1] for f in feats)
+
+    # Pad all features to max_time
+    padded_feats = []
+    for f in feats:
+        if f.shape[1] < max_time:
+            # Pad the temporal dimension (dimension 1)
+            pad_amount = max_time - f.shape[1]
+            f_padded = F.pad(f, (0, pad_amount))  # pad last dimension
+        else:
+            f_padded = f
+        padded_feats.append(f_padded)
+
+    return torch.stack(padded_feats, 0), torch.stack(labs, 0)
 
 
 class TrainingPipeline:
@@ -36,6 +66,58 @@ class TrainingPipeline:
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
+
+    @staticmethod
+    def presence_aware_split(labels, val_prop=0.18, seed=42):
+        """
+        Presence-aware split producing train / validation indices.
+
+        Ensures as many classes as feasible appear in validation without starving train.
+
+        Rules:
+          n == 1 -> train only
+          n == 2 -> train 1, val 1
+          n == 3 -> train 1, val 2
+          n >= 4 -> val = max(1, round(n*val_prop)), rest train (ensure >=1 in train)
+        """
+        from collections import defaultdict
+        rng = np.random.RandomState(seed)
+        label_to_indices = defaultdict(list)
+        for idx, lab in enumerate(labels):
+            label_to_indices[lab].append(idx)
+
+        train_indices = []
+        val_indices = []
+
+        # Sort by descending count so large classes are processed first
+        for lab, idx_list in sorted(label_to_indices.items(), key=lambda kv: -len(kv[1])):
+            idxs = idx_list[:]
+            rng.shuffle(idxs)
+            n = len(idxs)
+
+            if n == 1:
+                train_indices.extend(idxs)
+            elif n == 2:
+                train_indices.append(idxs[0])
+                val_indices.append(idxs[1])
+            elif n == 3:
+                train_indices.append(idxs[0])
+                val_indices.extend(idxs[1:])
+            else:
+                proposed_val = max(1, int(round(n * val_prop)))
+                # Make sure at least 1 remains in train
+                if proposed_val >= n:
+                    proposed_val = n - 1
+                val_sel = idxs[:proposed_val]
+                train_sel = idxs[proposed_val:]
+                if len(train_sel) == 0:  # safety
+                    train_sel.append(val_sel.pop())
+                val_indices.extend(val_sel)
+                train_indices.extend(train_sel)
+
+        rng.shuffle(train_indices)
+        rng.shuffle(val_indices)
+        return train_indices, val_indices
 
     def analyze_features(self, features):
         """Analyze feature shapes and content for debugging"""
@@ -150,47 +232,50 @@ class TrainingPipeline:
 
 
     def create_datasets(self, features, labels, label_map, slots):
-        """Create train and validation datasets (slot-aware)"""
+        """Create train and validation datasets (presence-aware)."""
         dataset = TwiDataset(features, labels, label_map, slots=slots)
 
-        indices = np.arange(len(dataset))
-        label_indices = np.array([dataset.label_to_idx[label] for label in labels])
+        val_prop = self.config.get('val_prop', 0.18)
+        seed = self.config.get('split_seed', 42)
+        train_indices, val_indices = self.presence_aware_split(labels, val_prop=val_prop, seed=seed)
 
-        # Stratified split
-        train_indices, val_indices = train_test_split(
-            indices, test_size=0.2, stratify=label_indices, random_state=42
-        )
-
-        # Create subset datasets
         train_dataset = Subset(dataset, train_indices)
         val_dataset = Subset(dataset, val_indices)
 
-        logger.info(f"Train set: {len(train_dataset)} samples")
-        logger.info(f"Validation set: {len(val_dataset)} samples")
+        # Save split manifest
+        split_manifest = {
+            "val_prop": val_prop,
+            "seed": seed,
+            "num_samples": len(labels),
+            "num_classes": len(label_map),
+            "train_indices": list(map(int, train_indices)),
+            "val_indices": list(map(int, val_indices)),
+            "class_counts": {str(lbl): int(sum(1 for l in labels if l == lbl)) for lbl in set(labels)}
+        }
+        with open(os.path.join(self.model_dir, "splits_manifest.json"), "w") as f:
+            json.dump(split_manifest, f, indent=2)
 
+        train_label_set = set(labels[i] for i in train_indices)
+        val_label_set = set(labels[i] for i in val_indices)
+        logger.info(f"Train set: {len(train_dataset)} samples | label coverage: {len(train_label_set)}/{len(label_map)}")
+        logger.info(f"Val set: {len(val_dataset)} samples | label coverage: {len(val_label_set)}/{len(label_map)}")
+        missing_in_val = [l for l in label_map.keys() if l not in val_label_set]
+        if missing_in_val:
+            logger.warning(f"Classes absent from validation: {missing_in_val}")
+
+        self.split_indices = {"train": train_indices, "val": val_indices}
         return train_dataset, val_dataset
 
     def create_dataloaders(self, train_dataset, val_dataset):
         """Create data loaders for training (strips slot dicts for legacy trainers)"""
         batch_size = self.config.get('batch_size', 32)
-
-        def _collate_strip_slots(batch):
-            import torch
-            feats, labs = [], []
-            for sample in batch:
-                if len(sample) == 3:
-                    f, l, _ = sample
-                else:
-                    f, l = sample
-                feats.append(f)
-                labs.append(l)
-            return torch.stack(feats, 0), torch.stack(labs, 0)
+        num_workers = self.config.get('num_workers', 2)
 
         train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=2,
+            num_workers=num_workers,
             pin_memory=True if self.device.type == 'cuda' else False,
             collate_fn=_collate_strip_slots
         )
@@ -198,7 +283,7 @@ class TrainingPipeline:
         val_loader = DataLoader(
             val_dataset,
             batch_size=batch_size,
-            num_workers=2,
+            num_workers=num_workers,
             pin_memory=True if self.device.type == 'cuda' else False,
             collate_fn=_collate_strip_slots
         )
@@ -222,9 +307,7 @@ class TrainingPipeline:
             dropout=dropout
         )
 
-
         return model
-
 
     def _normalize_features(self, features):
         """Normalize features across all samples for better convergence"""
@@ -306,7 +389,7 @@ class TrainingPipeline:
         return trainer, history
 
     def evaluate_model(self, trainer, val_loader, label_map):
-        """Evaluate the model on validation data and generate metrics"""
+        """Evaluate the model on validation data and generate dual metrics (full + present-class)."""
         # Load best model
         best_model_path = os.path.join(self.model_dir, "best_model.pt")
         if os.path.exists(best_model_path):
@@ -317,56 +400,103 @@ class TrainingPipeline:
         val_loss, val_acc, all_preds, all_targets = trainer.validate(val_loader)
         logger.info(f"Final validation accuracy: {val_acc:.2f}%")
 
-        # Generate confusion matrix if scikit-learn is available
-        try:
-            from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
+        from sklearn.metrics import (
+            confusion_matrix,
+            classification_report,
+            ConfusionMatrixDisplay,
+            f1_score
+        )
 
-            # Get class names
-            idx_to_label = {v: k for k, v in val_loader.dataset.dataset.label_to_idx.items()}
-            class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
+        # Class name resolution
+        idx_to_label = {v: k for k, v in val_loader.dataset.dataset.label_to_idx.items()}
+        class_names = [idx_to_label[i] for i in range(len(idx_to_label))]
 
-            # Compute confusion matrix
-            cm = confusion_matrix(all_targets, all_preds)
+        # Full confusion matrix
+        cm = confusion_matrix(all_targets, all_preds, labels=list(range(len(class_names))))
+        plt.figure(figsize=(12, 10))
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+        disp.plot()
+        plt.title('Confusion Matrix (Full)')
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.model_dir, 'confusion_matrix.png'))
+        plt.close()
 
-            # Plot confusion matrix
-            plt.figure(figsize=(12, 10))
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-            disp.plot(cmap=plt.cm.Blues, xticks_rotation=45)
-            plt.title('Confusion Matrix')
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.model_dir, 'confusion_matrix.png'))
+        # Full report
+        report_full = classification_report(
+            all_targets,
+            all_preds,
+            labels=list(range(len(class_names))),
+            target_names=class_names,
+            zero_division=0
+        )
 
-            # Generate classification report
-            report = classification_report(all_targets, all_preds, target_names=class_names)
-            logger.info(f"Classification Report:\n{report}")
+        # Present-class (intersection) report
+        present_labels = sorted(set(all_targets) & set(all_preds))
+        if present_labels:
+            report_present = classification_report(
+                all_targets,
+                all_preds,
+                labels=present_labels,
+                target_names=[class_names[i] for i in present_labels],
+                zero_division=0
+            )
+        else:
+            report_present = "No overlapping classes between predictions and ground truth."
 
-            # Save report to file
-            with open(os.path.join(self.model_dir, 'classification_report.txt'), 'w') as f:
-                f.write(str(report))
+        macro_f1_full = f1_score(
+            all_targets, all_preds,
+            labels=list(range(len(class_names))),
+            average='macro',
+            zero_division=0
+        )
+        macro_f1_present = (
+            f1_score(
+                all_targets, all_preds,
+                labels=present_labels,
+                average='macro',
+                zero_division=0
+            ) if present_labels else 0.0
+        )
 
-        except ImportError:
-            logger.warning("scikit-learn not available, skipping confusion matrix and classification report")
+        logger.info(f"Macro-F1 (full): {macro_f1_full:.4f}")
+        logger.info(f"Macro-F1 (present-only): {macro_f1_present:.4f} over {len(present_labels)} classes")
 
-        # Calculate per-class accuracy
+        # Save textual reports
+        with open(os.path.join(self.model_dir, 'classification_report_full.txt'), 'w') as f:
+            f.write(report_full)
+        with open(os.path.join(self.model_dir, 'classification_report_present.txt'), 'w') as f:
+            f.write(report_present)
+
+        # Save JSON metrics
+        metrics_full = {
+            "macro_f1_full": macro_f1_full,
+            "num_total_classes": len(class_names),
+            "num_present_classes_in_targets": int(len(set(all_targets)))
+        }
+        metrics_present = {
+            "macro_f1_present": macro_f1_present,
+            "present_label_count": len(present_labels),
+            "present_labels": [class_names[i] for i in present_labels]
+        }
+        with open(os.path.join(self.model_dir, 'metrics_full.json'), 'w') as f:
+            json.dump(metrics_full, f, indent=2)
+        with open(os.path.join(self.model_dir, 'metrics_present.json'), 'w') as f:
+            json.dump(metrics_present, f, indent=2)
+
+        # Per-class accuracy (only for classes occurring in validation targets)
         class_correct = {}
         class_total = {}
-
-        idx_to_label = {i: label for label, i in label_map.items()} if 'label_map' in locals() else {}
+        idx_to_label_simple = {i: label for label, i in label_map.items()}
         for pred, true in zip(all_preds, all_targets):
-            label = idx_to_label[true]
-            if label not in class_total:
-                class_total[label] = 0
-                class_correct[label] = 0
-
-            class_total[label] += 1
+            label = idx_to_label_simple.get(true, str(true))
+            class_total[label] = class_total.get(label, 0) + 1
             if pred == true:
-                class_correct[label] += 1
+                class_correct[label] = class_correct.get(label, 0) + 1
 
-        # Print per-class accuracy
-        logger.info("Per-class accuracy:")
+        logger.info("Per-class accuracy (targets only):")
         for label in sorted(class_total.keys()):
-            acc = 100.0 * class_correct[label] / class_total[label]
-            logger.info(f"  {label}: {acc:.2f}% ({class_correct[label]}/{class_total[label]})")
+            acc = 100.0 * class_correct.get(label, 0) / class_total[label]
+            logger.info(f"  {label}: {acc:.2f}% ({class_correct.get(label, 0)}/{class_total[label]})")
 
         return val_acc, class_correct, class_total
 
@@ -388,9 +518,7 @@ class TrainingPipeline:
             input_dim = self.config.get('input_dim', 39)
             logger.warning(f"No features found, using default input_dim={input_dim}")
 
-
         # Save the input dimension for future reference
-        import json
         model_info_path = os.path.join(self.model_dir, 'feature_info.json')
         with open(model_info_path, 'w') as f:
             json.dump({'input_dim': int(input_dim)}, f)
@@ -417,12 +545,11 @@ class TrainingPipeline:
             'num_classes': num_classes,
             'class_mapping': label_map,
             'validation_accuracy': val_acc,
-            'per_class_accuracy': {k: 100.0 * class_correct[k] / class_total[k] for k in class_total},
+            'per_class_accuracy': {k: 100.0 * class_correct.get(k, 0) / class_total[k] for k in class_total},
             'config': self.config
         }
 
         # Save as a metadata file for later reference
-        import json
         with open(os.path.join(self.model_dir, 'model_info.json'), 'w') as f:
             # Convert numpy types to Python types for JSON serialization
             model_info_serializable = {}
@@ -433,7 +560,7 @@ class TrainingPipeline:
                     model_info_serializable[k] = {str(c): int(i) for c, i in v.items()}
                 elif k == 'config':
                     model_info_serializable[k] = {k2: (v2 if not isinstance(v2, (np.integer, np.floating)) else float(v2))
-                                                for k2, v2 in v.items()}
+                                                  for k2, v2 in v.items()}
                 else:
                     model_info_serializable[k] = float(v) if isinstance(v, (np.integer, np.floating)) else v
 

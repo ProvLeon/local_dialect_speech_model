@@ -149,8 +149,21 @@ def extract_features_from_manifest(
 
     # Save features
     features_path = os.path.join(output_dir, 'features.npy')
-    np.save(features_path, features_list)
-    print(f"[INFO] Saved features to: {features_path}")
+    # np.save(features_path, features_list)
+    # print(f"[INFO] Saved features to: {features_path}")
+    # Handle variable-length (ragged) feature matrices safely.
+    unique_shapes = {feat.shape for feat in features_list}
+    if len(unique_shapes) == 1:
+        # All feature arrays share the same shape; save as a regular ndarray
+        np.save(features_path, np.array(features_list))
+        print(f"[INFO] Saved uniform feature array with shape {next(iter(unique_shapes))} to: {features_path}")
+    else:
+        # Ragged shapes – store as object array so loading with allow_pickle=True works
+        ragged_array = np.empty(len(features_list), dtype=object)
+        for i, feat in enumerate(features_list):
+            ragged_array[i] = feat
+        np.save(features_path, ragged_array, allow_pickle=True)
+        print(f"[INFO] Detected variable feature shapes {unique_shapes}. Saved object array to: {features_path}")
 
     # Save labels
     labels_path = os.path.join(output_dir, 'labels.npy')

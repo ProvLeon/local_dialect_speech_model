@@ -243,40 +243,55 @@ class FeatureExtractor:
 
 
 class TwiDataset(Dataset):
-    """PyTorch dataset for Twi audio commands with optional slot attachment."""
+    """PyTorch dataset for Twi audio commands with joint intent and slot labels."""
 
     def __init__(
         self,
         features,
         labels,
-        label_to_idx=None,
-        transform=None,
-        slots: Optional[List[Dict[str, Any]]] = None
+        slots: List[Dict[str, Any]],
+        label_to_idx: Dict[str, int],
+        slot_map: Dict[str, int],
+        slot_value_maps: Dict[str, Dict[str, int]],
+        transform=None
     ):
-        """
-        Initialize dataset
-
-        Args:
-            features: List or array of features
-            labels: List of string labels
-            label_to_idx: Mapping from string labels to indices
-            transform: Optional transform to apply
-            slots: Optional list of slot dictionaries aligned with features
-        """
         super().__init__()
         self.features = features
         self.labels = labels
+        self.slots = slots
+        self.label_to_idx = label_to_idx
+        self.slot_map = slot_map
+        self.slot_value_maps = slot_value_maps
         self.transform = transform
-        self.slots = slots if slots is not None else [{} for _ in range(len(features))]
 
-        if label_to_idx is None:
-            unique_labels = sorted(set(labels))
-            self.label_to_idx = {label: i for i, label in enumerate(unique_labels)}
-        else:
-            self.label_to_idx = label_to_idx
+        self.label_indices = [self.label_to_idx[label] for label in self.labels]
+        self._create_slot_targets()
 
-        # Convert string labels to indices
-        self.label_indices = [self.label_to_idx[label] for label in labels]
+    def _create_slot_targets(self):
+        """Create target tensors for both slot types and slot values."""
+        self.slot_type_vectors = []
+        self.slot_value_vectors = []
+        num_slot_types = len(self.slot_map)
+
+        for i in range(len(self.features)):
+            # Multi-hot vector for slot type presence
+            slot_type_vector = torch.zeros(num_slot_types)
+            sample_slots = self.slots[i]
+            slot_type = sample_slots.get('slot_type')
+            if slot_type and slot_type in self.slot_map:
+                slot_type_vector[self.slot_map[slot_type]] = 1
+            self.slot_type_vectors.append(slot_type_vector)
+
+            # Dictionary of target indices for each slot value
+            slot_value_vector = {}
+            for s_type, s_map in self.slot_value_maps.items():
+                target_idx = 0  # Default to '__none__'
+                if s_type == slot_type:
+                    s_value = sample_slots.get('slot_value')
+                    if s_value and s_value in s_map:
+                        target_idx = s_map[s_value]
+                slot_value_vector[s_type] = torch.tensor(target_idx, dtype=torch.long)
+            self.slot_value_vectors.append(slot_value_vector)
 
     def __len__(self):
         return len(self.features)
@@ -284,6 +299,8 @@ class TwiDataset(Dataset):
     def __getitem__(self, idx):
         feature = self.features[idx]
         label = self.label_indices[idx]
+        slot_type_vector = self.slot_type_vectors[idx]
+        slot_value_vector = self.slot_value_vectors[idx]
 
         feature_tensor = torch.tensor(feature, dtype=torch.float32)
         label_tensor = torch.tensor(label, dtype=torch.long)
@@ -291,11 +308,7 @@ class TwiDataset(Dataset):
         if self.transform:
             feature_tensor = self.transform(feature_tensor)
 
-        # Returning slots separately (not yet used by model, but available)
-        sample_slots = self.slots[idx] if idx < len(self.slots) else {}
-
-        return feature_tensor, label_tensor, sample_slots
+        return feature_tensor, label_tensor, slot_type_vector, slot_value_vector
 
     def get_num_classes(self):
-        """Get the number of classes"""
         return len(self.label_to_idx)

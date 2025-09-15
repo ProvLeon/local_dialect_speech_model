@@ -8,6 +8,7 @@ import sounddevice as sd
 import soundfile as sf
 import tempfile
 import logging
+import librosa
 from src.models.speech_model import EnhancedTwiSpeechModel
 from src.preprocessing.enhanced_audio_processor import EnhancedAudioProcessor
 from src.utils.model_utils import load_label_map, get_model_input_dim
@@ -83,6 +84,7 @@ def record_audio(duration=3, sample_rate=16000):
 def preprocess_audio(audio_path, processor, expected_input_dim):
     """
     Process audio with dimension adjustment to match model requirements
+    Applies delta enrichment like in training pipeline
 
     Args:
         audio_path: Path to audio file
@@ -97,9 +99,29 @@ def preprocess_audio(audio_path, processor, expected_input_dim):
 
     logger.info(f"Extracted features with shape: {features.shape}")
 
-    # Adjust dimensions if needed
+    # Apply delta enrichment to match training pipeline (39 -> 117 dimensions)
+    if features.shape[0] == 39 and expected_input_dim == 117:
+        try:
+            # Apply same delta enrichment as training
+            base = features
+            delta = librosa.feature.delta(base)
+            delta2 = librosa.feature.delta(base, order=2)
+            features = np.concatenate([base, delta, delta2], axis=0)
+            logger.info(f"Delta enrichment applied: 39 -> {features.shape[0]} feature dims")
+        except Exception as e:
+            logger.warning(f"Delta feature enrichment failed: {e}")
+    elif features.shape[0] == 58 and expected_input_dim == 117:
+        # If we got 58 dims (enhanced processor), apply delta to get 117
+        try:
+            delta = librosa.feature.delta(features)
+            features = np.concatenate([features, delta], axis=0)
+            logger.info(f"Delta enrichment applied: 58 -> {features.shape[0]} feature dims")
+        except Exception as e:
+            logger.warning(f"Delta feature enrichment failed: {e}")
+
+    # Final dimension adjustment if still needed
     if features.shape[0] != expected_input_dim:
-        # logger.info(f"Adjusting feature dimensions from {features.shape[0]} to {expected_input_dim}")
+        logger.warning(f"Adjusting feature dimensions from {features.shape[0]} to {expected_input_dim}")
 
         if features.shape[0] > expected_input_dim:
             # Truncate features if we have too many
@@ -109,7 +131,7 @@ def preprocess_audio(audio_path, processor, expected_input_dim):
             padding = np.zeros((expected_input_dim - features.shape[0], features.shape[1]))
             features = np.vstack((features, padding))
 
-        # logger.info(f"Adjusted features shape: {features.shape}")
+        logger.info(f"Adjusted features shape: {features.shape}")
 
     # Convert to tensor and add batch dimension
     features_tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0)  # Add batch dimension
@@ -152,8 +174,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
-    # Initialize audio processor
-    processor = EnhancedAudioProcessor(feature_type="combined")
+    # Initialize audio processor with same config as training
+    processor = EnhancedAudioProcessor(feature_type="mfcc")  # Use basic MFCC to get 39 dims like training
 
     # Load model
     model, label_map, expected_input_dim = load_model(args.model, args.label_map, device)
