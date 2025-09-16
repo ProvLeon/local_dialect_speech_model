@@ -1,30 +1,199 @@
 #!/usr/bin/env python3
 """
-Easy-to-use inference interface for the packaged speech model.
+Self-contained inference interface for the packaged speech model.
+This module does not depend on the main src/ directory and contains all necessary components.
 """
 
 import os
-import sys
 import json
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import librosa
+import numpy as np
 import logging
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
+import warnings
 
-# Add project root directory to path for imports
-project_root = Path(__file__).parent.parent.parent
-sys.path.append(str(project_root))
-
-try:
-    from src.models.speech_model import ImprovedTwiSpeechModel, IntentOnlyModel
-    from src.preprocessing.audio_processor import AudioProcessor
-except ImportError:
-    logging.warning("Could not import model components. Please ensure src/ is available.")
+# Suppress librosa warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 logger = logging.getLogger(__name__)
 
+class AudioProcessor:
+    """Self-contained audio processing for inference."""
+
+    def __init__(self, sr=16000, n_mfcc=13, n_mels=26, duration=3.0):
+        self.sr = sr
+        self.n_mfcc = n_mfcc
+        self.n_mels = n_mels
+        self.duration = duration
+        self.target_length = int(sr * duration)
+
+    def load_audio(self, audio_path: str) -> np.ndarray:
+        """Load and preprocess audio file."""
+        try:
+            # Load audio
+            audio, sr = librosa.load(audio_path, sr=self.sr, duration=self.duration)
+
+            # Ensure consistent length
+            if len(audio) < self.target_length:
+                # Pad with zeros
+                audio = np.pad(audio, (0, self.target_length - len(audio)), mode='constant')
+            else:
+                # Truncate
+                audio = audio[:self.target_length]
+
+            return audio
+        except Exception as e:
+            logger.error(f"Error loading audio {audio_path}: {e}")
+            raise
+
+    def extract_features(self, audio: np.ndarray) -> np.ndarray:
+        """Extract MFCC features from audio."""
+        try:
+            # Extract MFCCs
+            mfccs = librosa.feature.mfcc(
+                y=audio,
+                sr=self.sr,
+                n_mfcc=self.n_mfcc,
+                n_fft=512,
+                hop_length=256
+            )
+
+            # Extract delta and delta-delta features
+            delta = librosa.feature.delta(mfccs)
+            delta2 = librosa.feature.delta(mfccs, order=2)
+
+            # Combine features
+            features = np.vstack([mfccs, delta, delta2])
+
+            # Transpose to (time_steps, features)
+            features = features.T
+
+            return features
+        except Exception as e:
+            logger.error(f"Error extracting features: {e}")
+            raise
+
+    def process_audio_file(self, audio_path: str) -> torch.Tensor:
+        """Process audio file and return tensor ready for model."""
+        audio = self.load_audio(audio_path)
+        features = self.extract_features(audio)
+
+        # Convert to tensor and add batch dimension
+        tensor = torch.FloatTensor(features).unsqueeze(0)
+
+        return tensor
+
+
+class CustomAttention(nn.Module):
+    """Custom attention mechanism matching the saved model."""
+
+    def __init__(self, hidden_dim):
+        super(CustomAttention, self).__init__()
+        self.query = nn.Linear(hidden_dim, hidden_dim)
+        self.key = nn.Linear(hidden_dim, hidden_dim)
+        self.value = nn.Linear(hidden_dim, hidden_dim)
+        self.out = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(self, x):
+        q = self.query(x)
+        k = self.key(x)
+        v = self.value(x)
+
+        # Simple attention
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (k.size(-1) ** 0.5)
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_output = torch.matmul(attn_weights, v)
+
+        return self.out(attn_output)
+
+
+class IntentOnlyModel(nn.Module):
+    """Self-contained intent classification model matching saved architecture."""
+
+    def __init__(self, input_dim=39, hidden_dim=128, num_classes=49, dropout=0.3):
+        super(IntentOnlyModel, self).__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_classes = num_classes
+
+        # Convolutional layers (as Sequential modules to match saved structure)
+        self.conv1 = nn.Sequential(
+            nn.Conv1d(input_dim, 64, kernel_size=5, padding=2),  # kernel_size=5 based on weights
+            nn.BatchNorm1d(64)
+        )
+
+        self.conv2 = nn.Sequential(
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128)
+        )
+
+        # LSTM layers (bidirectional, 2 layers)
+        self.lstm = nn.LSTM(
+            input_size=128,  # After conv2
+            hidden_size=hidden_dim,
+            num_layers=2,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=True
+        )
+
+        # Custom attention mechanism
+        self.attention = CustomAttention(hidden_dim * 2)  # bidirectional
+
+        # Shared layer
+        self.shared_layer = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim)
+        )
+
+        # Intent classifier
+        self.intent_classifier = nn.Linear(hidden_dim, num_classes)
+
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        batch_size, seq_len, input_dim = x.shape
+
+        # Transpose for conv1d (batch, channels, seq_len)
+        x = x.transpose(1, 2)
+
+        # Convolutional layers
+        x = F.relu(self.conv1(x))
+        x = F.max_pool1d(x, 2)
+
+        x = F.relu(self.conv2(x))
+        x = F.max_pool1d(x, 2)
+
+        # Transpose back for LSTM (batch, seq_len, channels)
+        x = x.transpose(1, 2)
+
+        # LSTM layers
+        lstm_out, _ = self.lstm(x)
+
+        # Apply attention
+        attn_out = self.attention(lstm_out)
+
+        # Global average pooling over time dimension
+        pooled = torch.mean(attn_out, dim=1)
+
+        # Shared layer
+        x = F.relu(self.shared_layer(pooled))
+        x = self.dropout(x)
+
+        # Intent classification
+        logits = self.intent_classifier(x)
+
+        return logits
+
+
 class ModelInference:
-    """Simple inference interface for the packaged model."""
+    """Self-contained inference interface for the packaged model."""
 
     def __init__(self, package_path: str):
         self.package_path = Path(package_path)
@@ -33,197 +202,203 @@ class ModelInference:
         # Load configuration
         self.config = self._load_config()
 
-        # Load model
-        self.model = self._load_model()
+        # Initialize audio processor
+        self.audio_processor = AudioProcessor()
 
         # Load label maps
         self.label_map, self.idx_to_label = self._load_label_maps()
 
-        # Initialize audio processor
-        self.audio_processor = AudioProcessor()
+        # Load model
+        self.model = self._load_model()
 
         logger.info(f"Model loaded successfully on {self.device}")
 
     def _load_config(self) -> Dict[str, Any]:
         """Load model configuration."""
         config_path = self.package_path / 'config' / 'config.json'
+
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
         with open(config_path, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
 
-    def _load_model(self):
-        """Load the model based on configuration."""
-        model_path = self.package_path / 'model' / 'model_state_dict.bin'
-
-        # Create model based on type
-        if self.config['model_type'] == 'full':
-            model = ImprovedTwiSpeechModel(
-                input_dim=self.config.get('input_dim', 39),
-                hidden_dim=self.config.get('hidden_dim', 128),
-                num_classes=self.config.get('num_classes', 47),
-                num_layers=self.config.get('num_layers', 2),
-                dropout=self.config.get('dropout', 0.3),
-                num_slot_classes=self.config.get('num_slot_classes', 1),
-                slot_value_maps=self.config.get('slot_value_maps', {})
-            )
-        else:  # intent_only or enhanced
-            model = IntentOnlyModel(
-                input_dim=self.config.get('input_dim', 39),
-                hidden_dim=self.config.get('hidden_dim', 128),
-                num_classes=self.config.get('num_classes', 47),
-                num_layers=self.config.get('num_layers', 2),
-                dropout=self.config.get('dropout', 0.3)
-            )
-
-        # Load weights
-        state_dict = torch.load(model_path, map_location=self.device)
-        model.load_state_dict(state_dict, strict=False)
-        model.to(self.device)
-        model.eval()
-
-        return model
+        logger.info(f"Loaded config: {config.get('model_name', 'Unknown')} v{config.get('version', 'Unknown')}")
+        return config
 
     def _load_label_maps(self) -> Tuple[Dict[str, int], Dict[int, str]]:
-        """Load label mappings."""
-        label_path = self.package_path / 'tokenizer' / 'label_map.json'
+        """Load label mapping files."""
+        label_map_path = self.package_path / 'tokenizer' / 'label_map.json'
 
-        if label_path.exists():
-            with open(label_path, 'r') as f:
-                label_map = json.load(f)
+        if not label_map_path.exists():
+            # Create default label map based on config
+            num_classes = self.config.get('num_classes', 49)
+            label_map = {f"intent_{i}": i for i in range(num_classes)}
+            idx_to_label = {i: f"intent_{i}" for i in range(num_classes)}
+            logger.warning(f"Label map not found, created default with {num_classes} classes")
         else:
-            # Create default mapping
-            label_map = {f"intent_{i}": i for i in range(self.config['num_classes'])}
+            with open(label_map_path, 'r') as f:
+                label_map = json.load(f)
+            idx_to_label = {v: k for k, v in label_map.items()}
+            logger.info(f"Loaded label map with {len(label_map)} classes")
 
-        idx_to_label = {v: k for k, v in label_map.items()}
         return label_map, idx_to_label
 
-    def predict(self, audio_path: str) -> Tuple[str, float]:
-        """
-        Make prediction on audio file.
+    def _load_model(self) -> nn.Module:
+        """Load the trained model."""
+        # Try different model file names
+        model_files = [
+            'model_state_dict.bin',
+            'pytorch_model.bin',
+            'model.pt',
+            'best_model.pt'
+        ]
 
-        Args:
-            audio_path: Path to audio file
+        model_path = None
+        for model_file in model_files:
+            candidate_path = self.package_path / 'model' / model_file
+            if candidate_path.exists():
+                model_path = candidate_path
+                break
 
-        Returns:
-            Tuple of (predicted_intent, confidence)
-        """
+        if model_path is None:
+            raise FileNotFoundError(f"No model file found in {self.package_path / 'model'}")
+
+        # Initialize model with config parameters
+        model = IntentOnlyModel(
+            input_dim=self.config.get('input_dim', 39),
+            hidden_dim=self.config.get('hidden_dim', 128),
+            num_classes=self.config.get('num_classes', 49)
+        )
+
         try:
-            # Extract features
-            features = self.audio_processor.preprocess(audio_path)
+            # Load state dict
+            state_dict = torch.load(model_path, map_location=self.device)
 
-            # Ensure correct shape
-            if features.shape[1] < 50:
-                pad_width = 50 - features.shape[1]
-                features = torch.nn.functional.pad(torch.tensor(features), (0, pad_width))
-            elif features.shape[1] > 200:
-                features = features[:, :200]
+            # Handle different state dict formats
+            if 'model_state_dict' in state_dict:
+                model.load_state_dict(state_dict['model_state_dict'])
+            elif 'state_dict' in state_dict:
+                model.load_state_dict(state_dict['state_dict'])
+            else:
+                model.load_state_dict(state_dict)
 
-            # Convert to tensor
-            features_tensor = torch.FloatTensor(features).unsqueeze(0).to(self.device)
+            model.to(self.device)
+            model.eval()
+
+            logger.info(f"Loaded model from {model_path}")
+            return model
+
+        except Exception as e:
+            logger.error(f"Error loading model from {model_path}: {e}")
+            raise
+
+    def predict(self, audio_path: str) -> Tuple[str, float]:
+        """Predict intent from audio file."""
+        try:
+            # Process audio
+            features = self.audio_processor.process_audio_file(audio_path)
+            features = features.to(self.device)
 
             # Make prediction
             with torch.no_grad():
-                outputs = self.model(features_tensor)
+                logits = self.model(features)
+                probabilities = F.softmax(logits, dim=1)
+                predicted_idx = torch.argmax(probabilities, dim=1).item()
+                confidence = probabilities[0, predicted_idx].item()
 
-                # Handle different output formats
-                if isinstance(outputs, tuple):
-                    intent_logits = outputs[0]
-                else:
-                    intent_logits = outputs
+            # Get label
+            predicted_label = self.idx_to_label.get(predicted_idx, f"unknown_{predicted_idx}")
 
-                probabilities = torch.softmax(intent_logits, dim=1)
-                predicted_class = torch.argmax(probabilities, dim=1).item()
-                confidence = probabilities[0][predicted_class].item()
-
-            # Map to label
-            predicted_intent = self.idx_to_label.get(predicted_class, f"unknown_{predicted_class}")
-
-            return predicted_intent, confidence
+            return predicted_label, confidence
 
         except Exception as e:
             logger.error(f"Error during prediction: {e}")
             raise
 
-    def predict_topk(self, audio_path: str, top_k: int = 5) -> Tuple[str, float, list]:
-        """
-        Make prediction on audio file and return top-k predictions.
-
-        Args:
-            audio_path: Path to audio file
-            top_k: Number of top predictions to return
-
-        Returns:
-            Tuple of (predicted_intent, confidence, top_predictions_list)
-        """
+    def predict_topk(self, audio_path: str, top_k: int = 5) -> Tuple[str, float, List[Dict[str, Any]]]:
+        """Predict top-k intents from audio file."""
         try:
-            # Extract features
-            features = self.audio_processor.preprocess(audio_path)
-
-            # Ensure correct shape
-            if features.shape[1] < 50:
-                pad_width = 50 - features.shape[1]
-                features = torch.nn.functional.pad(torch.tensor(features), (0, pad_width))
-            elif features.shape[1] > 200:
-                features = features[:, :200]
-
-            # Convert to tensor
-            features_tensor = torch.FloatTensor(features).unsqueeze(0).to(self.device)
+            # Process audio
+            features = self.audio_processor.process_audio_file(audio_path)
+            features = features.to(self.device)
 
             # Make prediction
             with torch.no_grad():
-                outputs = self.model(features_tensor)
-
-                # Handle different output formats
-                if isinstance(outputs, tuple):
-                    intent_logits = outputs[0]
-                else:
-                    intent_logits = outputs
-
-                probabilities = torch.softmax(intent_logits, dim=1)
+                logits = self.model(features)
+                probabilities = F.softmax(logits, dim=1)
 
                 # Get top-k predictions
-                top_k_probs, top_k_indices = torch.topk(probabilities[0], min(top_k, probabilities.shape[1]))
+                top_probs, top_indices = torch.topk(probabilities[0], min(top_k, len(self.idx_to_label)))
 
-                # Create top predictions list
+                # Format results
                 top_predictions = []
-                for i in range(len(top_k_indices)):
-                    idx = top_k_indices[i].item()
-                    prob = top_k_probs[i].item()
-                    intent = self.idx_to_label.get(idx, f"unknown_{idx}")
-                    top_predictions.append({"intent": intent, "confidence": prob})
+                for prob, idx in zip(top_probs, top_indices):
+                    label = self.idx_to_label.get(idx.item(), f"unknown_{idx.item()}")
+                    top_predictions.append({
+                        'intent': label,
+                        'confidence': prob.item(),
+                        'index': idx.item()
+                    })
 
-                # Get the top prediction
-                predicted_intent = top_predictions[0]["intent"]
-                confidence = top_predictions[0]["confidence"]
+                # Best prediction
+                best_label = top_predictions[0]['intent']
+                best_confidence = top_predictions[0]['confidence']
 
-            return predicted_intent, confidence, top_predictions
+                return best_label, best_confidence, top_predictions
 
         except Exception as e:
-            logger.error(f"Error during prediction: {e}")
+            logger.error(f"Error during top-k prediction: {e}")
             raise
-
-    def predict_batch(self, audio_paths: list) -> list:
-        """Make predictions on multiple audio files."""
-        results = []
-        for audio_path in audio_paths:
-            try:
-                intent, confidence = self.predict(audio_path)
-                results.append({'audio_path': audio_path, 'intent': intent, 'confidence': confidence})
-            except Exception as e:
-                results.append({'audio_path': audio_path, 'error': str(e)})
-        return results
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get model information."""
         return {
-            'model_name': self.config.get('model_name'),
-            'version': self.config.get('version'),
-            'model_type': self.config.get('model_type'),
-            'num_classes': self.config.get('num_classes'),
-            'input_dim': self.config.get('input_dim'),
+            'model_name': self.config.get('model_name', 'Unknown'),
+            'version': self.config.get('version', 'Unknown'),
+            'description': self.config.get('description', ''),
+            'model_type': self.config.get('model_type', 'intent_only'),
+            'num_classes': self.config.get('num_classes', len(self.idx_to_label)),
+            'available_intents': list(self.label_map.keys()),
             'device': str(self.device),
-            'available_intents': list(self.label_map.keys())
+            'architecture': self.config.get('architecture', {}),
+            'input_dim': self.config.get('input_dim', 39),
+            'hidden_dim': self.config.get('hidden_dim', 128)
         }
 
-def load_model(package_path: str) -> ModelInference:
-    """Convenience function to load model."""
-    return ModelInference(package_path)
+    def health_check(self) -> Dict[str, Any]:
+        """Perform a health check."""
+        try:
+            # Create dummy input
+            dummy_input = torch.randn(1, 188, self.config.get('input_dim', 39)).to(self.device)
+
+            with torch.no_grad():
+                output = self.model(dummy_input)
+
+            return {
+                'status': 'healthy',
+                'model_loaded': True,
+                'device': str(self.device),
+                'output_shape': list(output.shape),
+                'num_classes': self.config.get('num_classes', len(self.idx_to_label))
+            }
+        except Exception as e:
+            return {
+                'status': 'unhealthy',
+                'error': str(e),
+                'model_loaded': hasattr(self, 'model'),
+                'device': str(self.device) if hasattr(self, 'device') else 'unknown'
+            }
+
+
+# For backwards compatibility
+if __name__ == "__main__":
+    # Simple test
+    import sys
+    if len(sys.argv) > 1:
+        package_path = sys.argv[1]
+        model = ModelInference(package_path)
+        print("Model loaded successfully!")
+        print(json.dumps(model.get_model_info(), indent=2))
+    else:
+        print("Usage: python inference.py <package_path>")

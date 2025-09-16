@@ -19,11 +19,15 @@ logger = logging.getLogger(__name__)
 
 # Import the inference module
 try:
-    from inference import ModelInference
+    from .inference import ModelInference
     logger.info("Successfully imported ModelInference")
-except ImportError as e:
-    logger.error(f"Failed to import ModelInference: {e}")
-    raise
+except ImportError:
+    try:
+        from inference import ModelInference
+        logger.info("Successfully imported ModelInference (fallback)")
+    except ImportError as e:
+        logger.error(f"Failed to import ModelInference: {e}")
+        raise
 
 app = FastAPI(title="Speech Model API", version="1.0.0")
 
@@ -40,20 +44,41 @@ app.add_middleware(
 try:
     model_path = Path(__file__).parent.parent
     logger.info(f"Loading model from: {model_path}")
-    model = ModelInference(model_path)
+    model = ModelInference(str(model_path))
     logger.info("Model loaded successfully")
+    logger.info(f"Model info: {model.get_model_info()}")
 except Exception as e:
     logger.error(f"Failed to load model: {e}")
+    logger.error(f"Model path attempted: {model_path}")
+    logger.error(f"Available files: {list(model_path.iterdir()) if model_path.exists() else 'Path does not exist'}")
     raise
 
 @app.get("/")
 async def root():
-    return {"message": "Speech Model API", "model_info": model.get_model_info()}
+    try:
+        model_info = model.get_model_info()
+        return {"message": "Twi Speech Model API", "status": "running", "model_info": model_info}
+    except Exception as e:
+        logger.error(f"Error getting model info: {e}")
+        return {"message": "Twi Speech Model API", "status": "running", "error": str(e)}
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "healthy", "message": "Speech Model API is running"}
+    try:
+        health_status = model.health_check()
+        return {
+            "status": "healthy",
+            "message": "Twi Speech Model API is running",
+            "model_health": health_status
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "degraded",
+            "message": "API is running but model health check failed",
+            "error": str(e)
+        }
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
