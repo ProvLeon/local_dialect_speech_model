@@ -17,16 +17,21 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Version info to verify correct file is being used
+SERVE_VERSION = "2.0.0-fixed"
+logger.info(f"🚀 Loading serve.py version {SERVE_VERSION} (self-contained)")
+
 # Import the inference module
 try:
     from .inference import ModelInference
-    logger.info("Successfully imported ModelInference")
+    logger.info("Successfully imported ModelInference (relative import)")
 except ImportError:
     try:
         from inference import ModelInference
-        logger.info("Successfully imported ModelInference (fallback)")
+        logger.info("Successfully imported ModelInference (direct import)")
     except ImportError as e:
         logger.error(f"Failed to import ModelInference: {e}")
+        logger.error("This means the inference.py file is not found or has import errors")
         raise
 
 app = FastAPI(title="Speech Model API", version="1.0.0")
@@ -46,6 +51,7 @@ try:
     logger.info(f"Loading model from: {model_path}")
     model = ModelInference(str(model_path))
     logger.info("Model loaded successfully")
+    logger.info(f"✅ Using serve.py version {SERVE_VERSION}")
     logger.info(f"Model info: {model.get_model_info()}")
 except Exception as e:
     logger.error(f"Failed to load model: {e}")

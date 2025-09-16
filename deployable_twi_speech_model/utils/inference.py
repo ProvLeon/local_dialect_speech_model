@@ -22,6 +22,10 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 logger = logging.getLogger(__name__)
 
+# Version info to verify correct file is being used
+INFERENCE_VERSION = "2.0.0-fixed"
+logger.info(f"🚀 Loading inference.py version {INFERENCE_VERSION} (self-contained)")
+
 class AudioProcessor:
     """Self-contained audio processing for inference."""
 
@@ -212,6 +216,7 @@ class ModelInference:
         self.model = self._load_model()
 
         logger.info(f"Model loaded successfully on {self.device}")
+        logger.info(f"✅ Using inference.py version {INFERENCE_VERSION}")
 
     def _load_config(self) -> Dict[str, Any]:
         """Load model configuration."""

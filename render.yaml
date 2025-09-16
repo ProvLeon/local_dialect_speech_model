@@ -3,8 +3,9 @@ services:
     name: akan-twi-speech-api
     runtime: python
     plan: starter
+    branch: version
     buildCommand: "pip install -r deployable_twi_speech_model/requirements.txt"
-    startCommand: "python start_render.py"
+    startCommand: "python start_simple_render.py"
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
@@ -12,5 +13,7 @@ services:
         value: "production"
       - key: LOG_LEVEL
         value: "INFO"
+      - key: RENDER_DEBUG
+        value: "1"
     healthCheckPath: /health
     autoDeploy: true
