@@ -12,6 +12,9 @@ import torch.nn.functional as F
 import librosa
 import numpy as np
 import logging
+import signal
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 import warnings
@@ -36,61 +39,114 @@ class AudioProcessor:
         self.duration = duration
         self.target_length = int(sr * duration)
 
-    def load_audio(self, audio_path: str) -> np.ndarray:
-        """Load and preprocess audio file."""
+    @contextmanager
+    def _timeout_handler(self, seconds):
+        """Context manager for timeout handling"""
+        def signal_handler(signum, frame):
+            raise TimeoutError(f"Audio processing timed out after {seconds} seconds")
+
+        # Set the signal handler and a timeout alarm
+        old_handler = signal.signal(signal.SIGALRM, signal_handler)
+        signal.alarm(seconds)
+
         try:
-            # Load audio
-            audio, sr = librosa.load(audio_path, sr=self.sr, duration=self.duration)
+            yield
+        finally:
+            # Reset the alarm and handler
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+    def load_audio(self, audio_path: str, timeout_seconds: int = 30) -> np.ndarray:
+        """Load and preprocess audio file with timeout handling."""
+        try:
+            logger.info(f"Loading audio file: {audio_path}")
+            start_time = time.time()
+
+            # Load audio with timeout
+            with self._timeout_handler(timeout_seconds):
+                audio, sr = librosa.load(audio_path, sr=self.sr, duration=self.duration)
+
+            load_time = time.time() - start_time
+            logger.info(f"Audio loaded in {load_time:.2f}s, length: {len(audio)} samples")
 
             # Ensure consistent length
             if len(audio) < self.target_length:
                 # Pad with zeros
                 audio = np.pad(audio, (0, self.target_length - len(audio)), mode='constant')
+                logger.debug(f"Padded audio to {len(audio)} samples")
             else:
                 # Truncate
                 audio = audio[:self.target_length]
+                logger.debug(f"Truncated audio to {len(audio)} samples")
 
             return audio
+        except TimeoutError:
+            logger.error(f"Audio loading timed out after {timeout_seconds}s: {audio_path}")
+            raise
         except Exception as e:
             logger.error(f"Error loading audio {audio_path}: {e}")
             raise
 
-    def extract_features(self, audio: np.ndarray) -> np.ndarray:
-        """Extract MFCC features from audio."""
+    def extract_features(self, audio: np.ndarray, timeout_seconds: int = 15) -> np.ndarray:
+        """Extract MFCC features from audio with timeout handling."""
         try:
-            # Extract MFCCs
-            mfccs = librosa.feature.mfcc(
-                y=audio,
-                sr=self.sr,
-                n_mfcc=self.n_mfcc,
-                n_fft=512,
-                hop_length=256
-            )
+            logger.debug("Extracting MFCC features")
+            start_time = time.time()
 
-            # Extract delta and delta-delta features
-            delta = librosa.feature.delta(mfccs)
-            delta2 = librosa.feature.delta(mfccs, order=2)
+            with self._timeout_handler(timeout_seconds):
+                # Extract MFCCs
+                mfccs = librosa.feature.mfcc(
+                    y=audio,
+                    sr=self.sr,
+                    n_mfcc=self.n_mfcc,
+                    n_fft=512,
+                    hop_length=256
+                )
 
-            # Combine features
-            features = np.vstack([mfccs, delta, delta2])
+                # Extract delta and delta-delta features
+                delta = librosa.feature.delta(mfccs)
+                delta2 = librosa.feature.delta(mfccs, order=2)
 
-            # Transpose to (time_steps, features)
-            features = features.T
+                # Combine features
+                features = np.vstack([mfccs, delta, delta2])
+
+                # Transpose to (time_steps, features)
+                features = features.T
+
+            extract_time = time.time() - start_time
+            logger.info(f"Features extracted in {extract_time:.2f}s, shape: {features.shape}")
 
             return features
+        except TimeoutError:
+            logger.error(f"Feature extraction timed out after {timeout_seconds}s")
+            raise
         except Exception as e:
             logger.error(f"Error extracting features: {e}")
             raise
 
-    def process_audio_file(self, audio_path: str) -> torch.Tensor:
-        """Process audio file and return tensor ready for model."""
-        audio = self.load_audio(audio_path)
-        features = self.extract_features(audio)
+    def process_audio_file(self, audio_path: str, timeout_seconds: int = 45) -> torch.Tensor:
+        """Process audio file and return tensor ready for model with timeout handling."""
+        logger.info(f"Processing audio file: {audio_path}")
+        start_time = time.time()
 
-        # Convert to tensor and add batch dimension
-        tensor = torch.FloatTensor(features).unsqueeze(0)
+        try:
+            # Load audio with timeout
+            audio = self.load_audio(audio_path, timeout_seconds // 2)
 
-        return tensor
+            # Extract features with timeout
+            features = self.extract_features(audio, timeout_seconds // 3)
+
+            # Convert to tensor and add batch dimension
+            tensor = torch.FloatTensor(features).unsqueeze(0)
+
+            process_time = time.time() - start_time
+            logger.info(f"Audio processing completed in {process_time:.2f}s, tensor shape: {tensor.shape}")
+
+            return tensor
+        except Exception as e:
+            process_time = time.time() - start_time
+            logger.error(f"Audio processing failed after {process_time:.2f}s: {e}")
+            raise
 
 
 class CustomAttention(nn.Module):
@@ -298,37 +354,56 @@ class ModelInference:
             logger.error(f"Error loading model from {model_path}: {e}")
             raise
 
-    def predict(self, audio_path: str) -> Tuple[str, float]:
-        """Predict intent from audio file."""
+    def predict(self, audio_path: str, timeout_seconds: int = 60) -> Tuple[str, float]:
+        """Predict intent from audio file with timeout handling."""
         try:
-            # Process audio
-            features = self.audio_processor.process_audio_file(audio_path)
+            logger.info(f"Starting prediction for: {audio_path}")
+            start_time = time.time()
+
+            # Process audio with timeout
+            features = self.audio_processor.process_audio_file(audio_path, timeout_seconds // 2)
             features = features.to(self.device)
 
-            # Make prediction
+            # Make prediction with timeout
+            logger.info("Running model inference")
+            inference_start = time.time()
+
             with torch.no_grad():
                 logits = self.model(features)
                 probabilities = F.softmax(logits, dim=1)
                 predicted_idx = torch.argmax(probabilities, dim=1).item()
                 confidence = probabilities[0, predicted_idx].item()
 
+            inference_time = time.time() - inference_start
+            total_time = time.time() - start_time
+
             # Get label
             predicted_label = self.idx_to_label.get(predicted_idx, f"unknown_{predicted_idx}")
+
+            logger.info(f"Prediction completed in {total_time:.2f}s (inference: {inference_time:.2f}s)")
+            logger.info(f"Result: {predicted_label} (confidence: {confidence:.3f})")
 
             return predicted_label, confidence
 
         except Exception as e:
-            logger.error(f"Error during prediction: {e}")
+            total_time = time.time() - start_time if 'start_time' in locals() else 0
+            logger.error(f"Error during prediction after {total_time:.2f}s: {e}")
             raise
 
-    def predict_topk(self, audio_path: str, top_k: int = 5) -> Tuple[str, float, List[Dict[str, Any]]]:
-        """Predict top-k intents from audio file."""
+    def predict_topk(self, audio_path: str, top_k: int = 5, timeout_seconds: int = 60) -> Tuple[str, float, List[Dict[str, Any]]]:
+        """Predict top-k intents from audio file with timeout handling."""
         try:
-            # Process audio
-            features = self.audio_processor.process_audio_file(audio_path)
+            logger.info(f"Starting top-k prediction for: {audio_path} (k={top_k})")
+            start_time = time.time()
+
+            # Process audio with timeout
+            features = self.audio_processor.process_audio_file(audio_path, timeout_seconds // 2)
             features = features.to(self.device)
 
-            # Make prediction
+            # Make prediction with timeout
+            logger.info("Running model inference")
+            inference_start = time.time()
+
             with torch.no_grad():
                 logits = self.model(features)
                 probabilities = F.softmax(logits, dim=1)
@@ -350,10 +425,17 @@ class ModelInference:
                 best_label = top_predictions[0]['intent']
                 best_confidence = top_predictions[0]['confidence']
 
-                return best_label, best_confidence, top_predictions
+            inference_time = time.time() - inference_start
+            total_time = time.time() - start_time
+
+            logger.info(f"Top-k prediction completed in {total_time:.2f}s (inference: {inference_time:.2f}s)")
+            logger.info(f"Top result: {best_label} (confidence: {best_confidence:.3f})")
+
+            return best_label, best_confidence, top_predictions
 
         except Exception as e:
-            logger.error(f"Error during top-k prediction: {e}")
+            total_time = time.time() - start_time if 'start_time' in locals() else 0
+            logger.error(f"Error during top-k prediction after {total_time:.2f}s: {e}")
             raise
 
     def get_model_info(self) -> Dict[str, Any]:

@@ -12,4 +12,13 @@ API_CONFIG = {
         "https://example-ecommerce.com"  # Example production frontend
     ],
     "max_upload_size": 10 * 1024 * 1024,  # 10 MB
+    "timeouts": {
+        "audio_conversion": 30,  # seconds
+        "audio_validation": 15,  # seconds
+        "audio_preprocessing": 60,  # seconds
+        "model_inference": 30,  # seconds
+        "total_request": 120,  # seconds
+        "ffmpeg_check": 10,  # seconds
+        "subprocess": 30,  # seconds
+    }
 }

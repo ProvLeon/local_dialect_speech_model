@@ -17,6 +17,7 @@ import json
 import time
 import tempfile
 import logging
+import asyncio
 from typing import Optional, Dict, Any, List, Tuple
 from threading import RLock
 
@@ -419,21 +420,27 @@ def get_active_classifier() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
 # Audio Processing Functions
 # ---------------------------------------------------------------------------
 def preprocess_audio(audio_path: str, classifier_obj: Dict[str, Any]) -> torch.Tensor:
-    """Preprocess audio file for model input"""
+    """Preprocess audio file for model input with timeout handling"""
     processor = classifier_obj["processor"]
 
-    # Extract features using AudioProcessor
-    features = processor.preprocess(audio_path)
+    logger.info(f"Preprocessing audio: {audio_path}")
+
+    # Extract features using AudioProcessor with timeout
+    features = processor.preprocess(audio_path, timeout_seconds=60)
+    logger.info(f"Features extracted with shape: {features.shape}")
 
     # Handle variable length by padding/truncating to reasonable size
     if features.shape[1] < 50:
         pad_width = 50 - features.shape[1]
         features = np.pad(features, ((0, 0), (0, pad_width)), mode='constant')
+        logger.debug(f"Padded features to shape: {features.shape}")
     elif features.shape[1] > 200:
         features = features[:, :200]
+        logger.debug(f"Truncated features to shape: {features.shape}")
 
     # Convert to tensor
     tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(device)
+    logger.info(f"Created tensor with shape: {tensor.shape}")
     return tensor
 
 def classify_audio(audio_path: str, classifier_obj: Dict[str, Any]) -> Tuple[str, float]:
@@ -809,36 +816,85 @@ async def test_intent(
     if not file.filename or not file.filename.lower().endswith((".wav", ".mp3", ".webm", ".ogg", ".m4a", ".aac", ".flac")):
         raise HTTPException(status_code=400, detail="Audio format not supported. Please use WAV, MP3, WebM, OGG, M4A, AAC, or FLAC format.")
 
+    logger.info(f"Received file for test-intent: {file.filename}, content_type: {file.content_type}, top_k: {top_k}")
+
     tmp_path = None
     try:
-        # Convert audio bytes to WAV format using robust converter
-        tmp_path = convert_bytes_to_wav(content, file.filename or "audio.wav")
+        start_time_total = time.time()
+
+        # Convert audio bytes to WAV format using robust converter with timeout
+        logger.info(f"Starting audio conversion for: {file.filename}")
+        try:
+            tmp_path = await asyncio.wait_for(
+                asyncio.to_thread(convert_bytes_to_wav, content, file.filename or "audio.wav", None, 30),
+                timeout=30.0
+            )
+            logger.info(f"Audio conversion completed, temp file: {tmp_path}")
+        except asyncio.TimeoutError:
+            logger.error(f"Audio conversion timed out for: {file.filename}")
+            raise HTTPException(status_code=408, detail="Audio conversion timed out. Please try a shorter audio file or different format.")
 
         if not tmp_path:
+            logger.error(f"Audio conversion failed for: {file.filename}")
             raise HTTPException(status_code=400, detail="Failed to convert audio to supported format. Please try a different audio file or check the audio format.")
 
-        # Validate the converted audio
-        if not validate_audio_file(tmp_path):
-            raise HTTPException(status_code=400, detail="Converted audio file is invalid, corrupted, or contains only silence. Please check your recording.")
+        logger.info(f"Saved file to: {tmp_path}")
+
+        # Validate the converted audio with timeout
+        try:
+            validation_result = await asyncio.wait_for(
+                asyncio.to_thread(validate_audio_file, tmp_path, 10),
+                timeout=15.0
+            )
+            if not validation_result:
+                logger.error(f"Audio validation failed for: {tmp_path}")
+                raise HTTPException(status_code=400, detail="Converted audio file is invalid, corrupted, or contains only silence. Please check your recording.")
+        except asyncio.TimeoutError:
+            logger.error(f"Audio validation timed out for: {tmp_path}")
+            raise HTTPException(status_code=408, detail="Audio validation timed out. Please try a different audio file.")
 
         # Additional validation - check file size
         if os.path.getsize(tmp_path) == 0:
+            logger.error(f"Converted audio file is empty: {tmp_path}")
             raise HTTPException(status_code=400, detail="Converted audio file is empty. Please check your recording.")
 
+        # Preprocess audio with timeout
+        logger.info(f"Starting audio preprocessing for: {tmp_path}")
         start_time_proc = time.time()
-        tensor = preprocess_audio(tmp_path, clf)
+        try:
+            tensor = await asyncio.wait_for(
+                asyncio.to_thread(preprocess_audio, tmp_path, clf),
+                timeout=60.0
+            )
+            logger.info(f"Audio preprocessing completed in {(time.time() - start_time_proc)*1000:.2f}ms")
+        except asyncio.TimeoutError:
+            logger.error(f"Audio preprocessing timed out for: {tmp_path}")
+            raise HTTPException(status_code=408, detail="Audio preprocessing timed out. Please try a shorter or simpler audio file.")
 
-        with torch.no_grad():
-            outputs = clf["model"](tensor)
+        # Model inference with timeout
+        logger.info("Starting model inference")
+        inference_start = time.time()
+        try:
+            def run_inference():
+                with torch.no_grad():
+                    outputs = clf["model"](tensor)
+                    # Handle tuple output from model (intent_logits, slot_logits)
+                    if isinstance(outputs, tuple):
+                        intent_logits = outputs[0]
+                    else:
+                        intent_logits = outputs
+                    probs = torch.softmax(intent_logits, dim=1)
+                    conf, idx = probs.max(1)
+                    return probs, conf, idx
 
-            # Handle tuple output from model (intent_logits, slot_logits)
-            if isinstance(outputs, tuple):
-                intent_logits = outputs[0]
-            else:
-                intent_logits = outputs
-
-            probs = torch.softmax(intent_logits, dim=1)
-            conf, idx = probs.max(1)
+            probs, conf, idx = await asyncio.wait_for(
+                asyncio.to_thread(run_inference),
+                timeout=30.0
+            )
+            logger.info(f"Model inference completed in {(time.time() - inference_start)*1000:.2f}ms")
+        except asyncio.TimeoutError:
+            logger.error("Model inference timed out")
+            raise HTTPException(status_code=408, detail="Model inference timed out. Please try again.")
 
         # Get top-k predictions
         label_map = clf["label_map"]
@@ -857,6 +913,9 @@ async def test_intent(
 
         primary_intent = idx_to_label.get(idx.item(), f"cls_{idx.item()}")
         processing_time_ms = (time.time() - start_time_proc) * 1000
+        total_time_ms = (time.time() - start_time_total) * 1000
+
+        logger.info(f"Intent classification completed: {primary_intent} ({float(conf.item()):.3f}) in {total_time_ms:.2f}ms")
 
         return {
             "filename": file.filename,
@@ -864,9 +923,13 @@ async def test_intent(
             "confidence": float(conf.item()),
             "top_predictions": top_predictions,
             "model_type": model_type,
-            "processing_time_ms": processing_time_ms
+            "processing_time_ms": processing_time_ms,
+            "total_time_ms": total_time_ms
         }
 
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout occurred during audio processing for: {file.filename}")
+        raise HTTPException(status_code=408, detail="Request timed out. Please try a shorter audio file or different format.")
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -881,7 +944,9 @@ async def test_intent(
             if tmp_path and os.path.exists(tmp_path):
                 logger.error(f"Temp file size: {os.path.getsize(tmp_path)} bytes")
 
-        if "Format not recognised" in str(e) or "NoBackendError" in str(e):
+        if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+            raise HTTPException(status_code=408, detail="Processing timed out. Please try a shorter audio file or different format.")
+        elif "Format not recognised" in str(e) or "NoBackendError" in str(e):
             raise HTTPException(status_code=400, detail="Audio format not supported. Please use WAV, MP3, WebM, OGG, M4A, AAC, or FLAC format.")
         elif "NaN" in str(e) or "Input X contains NaN" in str(e) or "not finite everywhere" in str(e):
             raise HTTPException(status_code=400, detail="Audio processing failed. The audio may be corrupted, too short, or contains invalid data.")
@@ -895,7 +960,11 @@ async def test_intent(
             raise HTTPException(status_code=500, detail=f"Error processing audio: {e}")
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+                logger.debug(f"Cleaned up temporary file: {tmp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temporary file {tmp_path}: {cleanup_error}")
 
 @app.get("/reset-metrics")
 async def reset_metrics():

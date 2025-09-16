@@ -7,6 +7,7 @@ import os
 import uvicorn
 import logging
 import time
+import asyncio
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,6 +103,7 @@ async def health():
 async def predict(file: UploadFile = File(...)):
     """Predict intent from uploaded audio file."""
     start_time = time.time()
+    tmp_path = None
     try:
         logger.info(f"Received file: {file.filename}, content_type: {file.content_type}")
 
@@ -113,12 +115,16 @@ async def predict(file: UploadFile = File(...)):
 
         logger.info(f"Saved file to: {tmp_path}")
 
-        # Make prediction
-        intent, confidence, top_predictions = model.predict_topk(tmp_path, top_k=5)
-        logger.info(f"Prediction: {intent}, confidence: {confidence}")
-
-        # Clean up
-        os.unlink(tmp_path)
+        # Make prediction with timeout
+        try:
+            intent, confidence, top_predictions = await asyncio.wait_for(
+                asyncio.to_thread(model.predict_topk, tmp_path, 5, 60),
+                timeout=90.0
+            )
+            logger.info(f"Prediction: {intent}, confidence: {confidence}")
+        except asyncio.TimeoutError:
+            logger.error(f"Prediction timed out for file: {file.filename}")
+            raise HTTPException(status_code=408, detail="Prediction timed out. Please try a shorter audio file.")
 
         processing_time_ms = (time.time() - start_time) * 1000
 
@@ -131,14 +137,28 @@ async def predict(file: UploadFile = File(...)):
             "processing_time_ms": round(processing_time_ms, 2)
         }
 
+    except asyncio.TimeoutError:
+        logger.error(f"Request timed out for file: {file.filename}")
+        raise HTTPException(status_code=408, detail="Request timed out. Please try a shorter audio file.")
     except Exception as e:
         logger.error(f"Error in predict endpoint: {e}")
+        if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+            raise HTTPException(status_code=408, detail="Processing timed out. Please try a shorter audio file.")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                logger.debug(f"Cleaned up temp file: {tmp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file {tmp_path}: {cleanup_error}")
 
 @app.post("/test-intent")
 async def test_intent(file: UploadFile = File(...), top_k: int = 5):
     """Test intent from uploaded audio file (frontend-compatible endpoint)."""
     start_time = time.time()
+    tmp_path = None
     try:
         logger.info(f"Received file for test-intent: {file.filename}, content_type: {file.content_type}, top_k: {top_k}")
 
@@ -150,12 +170,16 @@ async def test_intent(file: UploadFile = File(...), top_k: int = 5):
 
         logger.info(f"Saved file to: {tmp_path}")
 
-        # Make prediction
-        intent, confidence, top_predictions = model.predict_topk(tmp_path, top_k=top_k)
-        logger.info(f"Prediction: {intent}, confidence: {confidence}")
-
-        # Clean up
-        os.unlink(tmp_path)
+        # Make prediction with timeout
+        try:
+            intent, confidence, top_predictions = await asyncio.wait_for(
+                asyncio.to_thread(model.predict_topk, tmp_path, top_k, 60),
+                timeout=90.0
+            )
+            logger.info(f"Prediction: {intent}, confidence: {confidence}")
+        except asyncio.TimeoutError:
+            logger.error(f"Prediction timed out for file: {file.filename}")
+            raise HTTPException(status_code=408, detail="Prediction timed out. Please try a shorter audio file.")
 
         processing_time_ms = (time.time() - start_time) * 1000
 
@@ -169,9 +193,22 @@ async def test_intent(file: UploadFile = File(...), top_k: int = 5):
             "top_k": top_k
         }
 
+    except asyncio.TimeoutError:
+        logger.error(f"Request timed out for file: {file.filename}")
+        raise HTTPException(status_code=408, detail="Request timed out. Please try a shorter audio file.")
     except Exception as e:
         logger.error(f"Error in test-intent endpoint: {e}")
+        if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+            raise HTTPException(status_code=408, detail="Processing timed out. Please try a shorter audio file.")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                logger.debug(f"Cleaned up temp file: {tmp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file {tmp_path}: {cleanup_error}")
 
 @app.get("/model-info")
 async def model_info():

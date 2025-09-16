@@ -5,6 +5,8 @@ import soundfile as sf
 from pydub import AudioSegment
 import random
 import warnings
+import signal
+from contextlib import contextmanager
 from typing import Tuple, Optional, Callable, Dict, Any
 from src.utils.audio_converter import convert_audio_to_wav, validate_audio_file
 
@@ -78,7 +80,24 @@ class AudioProcessor:
             default_aug.update(augment_config)
         self.augment_config = default_aug
 
-    def load_audio(self, file_path: str) -> Tuple[np.ndarray, int]:
+    @contextmanager
+    def _timeout_handler(self, seconds):
+        """Context manager for timeout handling"""
+        def signal_handler(signum, frame):
+            raise TimeoutError(f"Audio processing timed out after {seconds} seconds")
+
+        # Set the signal handler and a timeout alarm
+        old_handler = signal.signal(signal.SIGALRM, signal_handler)
+        signal.alarm(seconds)
+
+        try:
+            yield
+        finally:
+            # Reset the alarm and handler
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+    def load_audio(self, file_path: str, timeout_seconds: int = 30) -> Tuple[np.ndarray, int]:
         """
         Load audio file and convert to appropriate format.
         Handles multiple formats robustly with conversion fallbacks.
@@ -90,12 +109,18 @@ class AudioProcessor:
             Tuple of audio data and sample rate
         """
         # Try to convert to WAV format first for reliable loading
-        converted_path = convert_audio_to_wav(file_path)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Loading audio file: {file_path}")
 
-        if converted_path and validate_audio_file(converted_path):
+        converted_path = convert_audio_to_wav(file_path, timeout_seconds=timeout_seconds)
+
+        if converted_path and validate_audio_file(converted_path, timeout_seconds=10):
             try:
-                # Load the converted WAV file
-                audio, sr = librosa.load(converted_path, sr=self.sample_rate, mono=True)
+                # Load the converted WAV file with timeout
+                logger.debug(f"Loading converted audio: {converted_path}")
+                with self._timeout_handler(timeout_seconds):
+                    audio, sr = librosa.load(converted_path, sr=self.sample_rate, mono=True)
 
                 # Clean up temporary file if it was created
                 if converted_path != file_path:
@@ -122,19 +147,26 @@ class AudioProcessor:
                         os.unlink(converted_path)
                     except:
                         pass
+                logger.error(f"Error loading audio {file_path}: {e}")
                 raise e
 
         # Fallback to original method if conversion fails
-        if file_path.endswith('.mp3'):
-            audio = AudioSegment.from_mp3(file_path)
-            audio = audio.set_channels(1)  # Convert to mono
-            audio = audio.set_frame_rate(self.sample_rate)
-            samples = np.array(audio.get_array_of_samples())
-            return samples.astype(np.float32) / 32768.0, self.sample_rate
-        else:
-            # Use librosa for wav and other formats
-            audio, sr = librosa.load(file_path, sr=self.sample_rate, mono=True)
-            return audio, int(sr)
+        logger.debug(f"Using fallback loading method for: {file_path}")
+        try:
+            with self._timeout_handler(timeout_seconds):
+                if file_path.endswith('.mp3'):
+                    audio = AudioSegment.from_mp3(file_path)
+                    audio = audio.set_channels(1)  # Convert to mono
+                    audio = audio.set_frame_rate(self.sample_rate)
+                    samples = np.array(audio.get_array_of_samples())
+                    return samples.astype(np.float32) / 32768.0, self.sample_rate
+                else:
+                    # Use librosa for wav and other formats
+                    audio, sr = librosa.load(file_path, sr=self.sample_rate, mono=True)
+                    return audio, int(sr)
+        except TimeoutError:
+            logger.error(f"Audio loading timed out after {timeout_seconds}s: {file_path}")
+            raise
 
     def extract_mfcc(self, audio: np.ndarray) -> np.ndarray:
         """
@@ -159,7 +191,7 @@ class AudioProcessor:
             features = mfcc
         return features
 
-    def preprocess(self, file_path: str, max_length: Optional[int] = None) -> np.ndarray:
+    def preprocess(self, file_path: str, max_length: Optional[int] = None, timeout_seconds: int = 60) -> np.ndarray:
         """
         Complete preprocessing pipeline:
           1. Load
@@ -170,25 +202,67 @@ class AudioProcessor:
           6. Optional SpecAugment (masking)
           7. Pad / truncate
         """
-        # Load audio
-        audio, _ = self.load_audio(file_path)
+        # Load audio with timeout
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting preprocessing for: {file_path}")
+
+        try:
+            audio, _ = self.load_audio(file_path, timeout_seconds=timeout_seconds//2)
+            logger.debug(f"Audio loaded successfully, length: {len(audio)} samples")
+        except Exception as e:
+            logger.error(f"Failed to load audio {file_path}: {e}")
+            raise
 
         # Waveform augment (only if enabled)
-        if self.enable_audio_augment:
-            audio = self._augment_waveform(audio)
+        try:
+            if self.enable_audio_augment:
+                logger.debug("Applying waveform augmentation")
+                with self._timeout_handler(timeout_seconds//4):
+                    audio = self._augment_waveform(audio)
+        except TimeoutError:
+            logger.error("Waveform augmentation timed out, continuing without augmentation")
+        except Exception as e:
+            logger.warning(f"Waveform augmentation failed: {e}, continuing without augmentation")
 
         # Apply noise reduction (lightweight)
-        audio = self._reduce_noise(audio)
+        try:
+            logger.debug("Applying noise reduction")
+            with self._timeout_handler(timeout_seconds//4):
+                audio = self._reduce_noise(audio)
+        except TimeoutError:
+            logger.error("Noise reduction timed out, using original audio")
+        except Exception as e:
+            logger.warning(f"Noise reduction failed: {e}, using original audio")
 
         # Extract MFCC-based features
-        features = self.extract_mfcc(audio)
+        try:
+            logger.debug("Extracting MFCC features")
+            with self._timeout_handler(timeout_seconds//4):
+                features = self.extract_mfcc(audio)
+            logger.debug(f"MFCC features extracted, shape: {features.shape}")
+        except TimeoutError:
+            logger.error("MFCC extraction timed out")
+            raise
+        except Exception as e:
+            logger.error(f"MFCC extraction failed: {e}")
+            raise
 
         # Normalize features (channel-wise)
-        features = self._normalize_features(features)
+        try:
+            logger.debug("Normalizing features")
+            features = self._normalize_features(features)
+        except Exception as e:
+            logger.error(f"Feature normalization failed: {e}")
+            raise
 
         # SpecAugment (mask on time / freq axes) - works in-place on numpy
-        if self.enable_spec_augment:
-            features = self._spec_augment(features)
+        try:
+            if self.enable_spec_augment:
+                logger.debug("Applying SpecAugment")
+                features = self._spec_augment(features)
+        except Exception as e:
+            logger.warning(f"SpecAugment failed: {e}, continuing without augmentation")
 
         # Pad or truncate
         if max_length is not None:
@@ -199,6 +273,7 @@ class AudioProcessor:
                 padding = np.zeros((features.shape[0], max_length - T))
                 features = np.hstack((features, padding))
 
+        logger.info(f"Preprocessing completed successfully, final shape: {features.shape}")
         return features
 
     def _reduce_noise(self, audio: np.ndarray) -> np.ndarray:
