@@ -3,7 +3,6 @@ services:
     name: akan-twi-speech-api
     runtime: python
     plan: starter
-    branch: version
     buildCommand: "pip install -r deployable_twi_speech_model/requirements.txt"
     startCommand: "python start_simple_render.py"
     envVars:
