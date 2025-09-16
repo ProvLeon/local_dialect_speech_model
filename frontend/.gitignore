@@ -11,7 +11,7 @@
 !.yarn/versions
 *.lock
 deno.json
-*.toml
+netlify.toml
 # testing
 /coverage
 
