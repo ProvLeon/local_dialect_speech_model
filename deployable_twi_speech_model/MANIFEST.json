@@ -1,0 +1,56 @@
+{
+  "package_name": "TwiSpeechIntentClassifier",
+  "version": "1.0.0",
+  "created_at": "2025-09-15T21:25:52.835889",
+  "package_version": "1.0.0",
+  "files": {
+    "requirements.txt": {
+      "size": 108,
+      "sha256": "ec03faca03bbd58997aae59936b6be1a531247660970af1b1770fef0affccb94"
+    },
+    "Dockerfile": {
+      "size": 400,
+      "sha256": "98a7d7bcd758e402b30c001daef4c70a1a03ebcae283778710a15bf2836f9ba9"
+    },
+    "__init__.py": {
+      "size": 607,
+      "sha256": "e867aa5976253601ec3ea24f86cdda8d78bdd62384d02e8ecd25fbbf8103b2f7"
+    },
+    "config/config.json": {
+      "size": 667,
+      "sha256": "264dd44d0764f75b87e63f3e24bb0a21af7188abd42afbb6727defb04301a96b"
+    },
+    "config/config.yaml": {
+      "size": 528,
+      "sha256": "8925019224d812d108c0400d8119beae22c75ad45fe651ca0f7db20caafd65fb"
+    },
+    "config/model_config.json": {
+      "size": 199,
+      "sha256": "51f400a7d02b432b7e10b345214648d831fc947829b899f12296e80c9e66e6ea"
+    },
+    "tokenizer/label_map.json": {
+      "size": 1096,
+      "sha256": "8e68c277847c032a8fd66402372753b62bdce64495cd260044f7e1760eb060c3"
+    },
+    "utils/serve.py": {
+      "size": 1494,
+      "sha256": "4d6bb4802471a484b8a22201c3e8d5547b4eaf967ab2d48921deb489671c1363"
+    },
+    "utils/inference.py": {
+      "size": 6135,
+      "sha256": "1d42faf629b14730ee6fe7ed325bbd17adf26d5552b3f6b6646f64bc8821e13d"
+    },
+    "docs/MODEL_CARD.md": {
+      "size": 2222,
+      "sha256": "ea99eb1b2fad532332ef53f3ffd4c936391ee3d1ba81c128841fff42c4edb870"
+    },
+    "model/model_state_dict.bin": {
+      "size": 4009561,
+      "sha256": "c3c7720e378eb72c954327a4a2faf1b3dd0fddc689b1923aa4703a01e9444cae"
+    },
+    "model/pytorch_model.bin": {
+      "size": 4009963,
+      "sha256": "5430283b30500cbd8df89e1fe540989e49c7262a05b8af27a20e4225bdb1ffe5"
+    }
+  }
+}

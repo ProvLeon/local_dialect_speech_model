@@ -1,0 +1,44 @@
+{
+  "package_info": {
+    "name": "TwiSpeechIntentClassifier",
+    "version": "1.0.0",
+    "description": "Advanced Twi speech intent recognition model trained on local dialect data with 49 intent classes for e-commerce applications",
+    "author": "Local Dialect Speech Team",
+    "license": "MIT",
+    "created_at": "2025-09-15T23:04:39.697024",
+    "package_type": "speech_model",
+    "framework": "pytorch"
+  },
+  "model_info": {
+    "model_type": "intent_classification",
+    "input_type": "audio",
+    "output_type": "intent_classification",
+    "supported_formats": [
+      "wav",
+      "mp3",
+      "flac"
+    ],
+    "sample_rate": 16000,
+    "max_duration_seconds": 30
+  },
+  "deployment": {
+    "api_framework": "fastapi",
+    "default_port": 8000,
+    "docker_support": true,
+    "cuda_support": true
+  },
+  "files": {
+    "archive": "TwiSpeechIntentClassifier_1.0.0.tar.gz",
+    "size_bytes": 7497171,
+    "sha256": "ed9d4b1acb28b985196fe9b16605db2f4ef88b1eb7c1083007e99a706f7da36f"
+  },
+  "requirements": {
+    "python_version": ">=3.8",
+    "system_dependencies": [
+      "libsndfile1",
+      "ffmpeg"
+    ],
+    "gpu_memory_mb": 2048,
+    "disk_space_mb": 500
+  }
+}

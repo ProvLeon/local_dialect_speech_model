@@ -26,3 +26,4 @@ raw_backup*
 data/models/*
 results/*
 logs/*
+venv

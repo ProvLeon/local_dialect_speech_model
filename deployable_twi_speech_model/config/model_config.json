@@ -1,0 +1,11 @@
+{
+  "model_type": "intent_only",
+  "input_dim": 39,
+  "hidden_dim": 128,
+  "num_classes": 49,
+  "num_layers": 2,
+  "dropout": 0.3,
+  "num_slot_classes": 1,
+  "slot_value_maps": {},
+  "num_heads": 4
+}

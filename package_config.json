@@ -1,0 +1,307 @@
+{
+  "model_name": "TwiSpeechIntentClassifier",
+  "version": "1.0.0",
+  "description": "Advanced Twi speech intent recognition model trained on local dialect data with 49 intent classes for e-commerce applications",
+  "author": "Local Dialect Speech Team",
+  "license": "MIT",
+  "homepage": "https://github.com/okantah/local_dialect_speech_model",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/okantah/local_dialect_speech_model.git"
+  },
+  "keywords": [
+    "speech-recognition",
+    "twi",
+    "intent-classification",
+    "local-dialect",
+    "africa",
+    "e-commerce",
+    "pytorch",
+    "fastapi"
+  ],
+  "python_version": ">=3.8",
+  "model_files": {
+    "state_dict": "model/model_state_dict.bin",
+    "pytorch_model": "model/pytorch_model.bin",
+    "config": "config/config.json",
+    "label_map": "tokenizer/label_map.json",
+    "preprocessor_config": "config/model_config.json"
+  },
+  "source_paths": {
+    "model_dir": "deployable_twi_speech_model",
+    "config_dir": "deployable_twi_speech_model/config",
+    "src_dir": "src",
+    "tests_dir": "tests"
+  },
+  "model_architecture": {
+    "type": "intent_only",
+    "framework": "pytorch",
+    "input_dim": 39,
+    "hidden_dim": 128,
+    "num_classes": 49,
+    "num_layers": 2,
+    "dropout": 0.3,
+    "has_conv_layers": true,
+    "has_lstm": true,
+    "has_gru": false,
+    "has_attention": true,
+    "has_squeeze_excite": false
+  },
+  "deployment": {
+    "api_port": 8000,
+    "max_workers": 4,
+    "timeout": 30,
+    "max_requests": 1000,
+    "max_requests_jitter": 50,
+    "enable_cuda": true,
+    "batch_size": 1,
+    "max_audio_length_seconds": 30
+  },
+  "docker": {
+    "base_image": "python:3.9-slim",
+    "expose_port": 8000,
+    "healthcheck_endpoint": "/health",
+    "healthcheck_interval": "30s",
+    "healthcheck_timeout": "10s",
+    "healthcheck_retries": 3,
+    "memory_limit": "2g",
+    "cpu_limit": "1000m"
+  },
+  "performance": {
+    "supported_sample_rates": [
+      16000,
+      22050,
+      44100
+    ],
+    "recommended_sample_rate": 16000,
+    "supported_formats": [
+      "wav",
+      "mp3",
+      "flac"
+    ],
+    "max_audio_duration_seconds": 30,
+    "expected_latency_ms": 500,
+    "memory_usage_mb": 512,
+    "disk_space_mb": 500
+  },
+  "testing": {
+    "test_audio_samples": [
+      "tests/samples/test_audio_1.wav",
+      "tests/samples/test_audio_2.wav",
+      "tests/samples/test_audio_3.wav"
+    ],
+    "expected_performance": {
+      "min_accuracy": 0.85,
+      "max_latency_ms": 2000,
+      "min_confidence_threshold": 0.5
+    },
+    "smoke_tests": {
+      "health_check": true,
+      "model_info": true,
+      "single_prediction": true,
+      "batch_prediction": false
+    }
+  },
+  "monitoring": {
+    "enable_metrics": true,
+    "metrics_endpoint": "/metrics",
+    "log_level": "INFO",
+    "log_format": "json",
+    "enable_request_logging": true,
+    "enable_performance_tracking": true
+  },
+  "security": {
+    "enable_cors": true,
+    "allowed_origins": [
+      "*"
+    ],
+    "max_request_size_mb": 50,
+    "rate_limiting": {
+      "enabled": false,
+      "requests_per_minute": 100
+    },
+    "authentication": {
+      "enabled": false,
+      "type": "api_key"
+    }
+  },
+  "dependencies": {
+    "core": [
+      "torch>=1.9.0,<2.0.0",
+      "numpy>=1.21.0,<2.0.0",
+      "librosa>=0.8.0,<1.0.0",
+      "soundfile>=0.10.0,<1.0.0"
+    ],
+    "api": [
+      "fastapi>=0.68.0,<1.0.0",
+      "uvicorn[standard]>=0.15.0,<1.0.0",
+      "pydantic>=1.8.0,<2.0.0",
+      "python-multipart>=0.0.5"
+    ],
+    "dev": [
+      "pytest>=6.0.0",
+      "pytest-cov>=2.0.0",
+      "pytest-asyncio>=0.15.0",
+      "black>=21.0.0",
+      "isort>=5.0.0",
+      "flake8>=3.8.0",
+      "mypy>=0.910"
+    ],
+    "deployment": [
+      "gunicorn>=20.0.0",
+      "prometheus-client>=0.11.0",
+      "structlog>=21.0.0"
+    ]
+  },
+  "model_metadata": {
+    "training_data": {
+      "language": "Twi (Akan)",
+      "dialect": "Ashanti Twi",
+      "domain": "E-commerce",
+      "num_speakers": "multiple",
+      "recording_quality": "16kHz, 16-bit"
+    },
+    "intent_classes": [
+      "add_address",
+      "add_to_cart",
+      "apply_coupon",
+      "apply_filter",
+      "cancel_order",
+      "change_color",
+      "change_quantity",
+      "change_size",
+      "checkout",
+      "clear_cart",
+      "clear_filter",
+      "confirm_order",
+      "continue",
+      "disable_order_updates",
+      "disable_price_alert",
+      "enable_order_updates",
+      "enable_price_alert",
+      "exchange_item",
+      "go_back",
+      "go_home",
+      "help",
+      "make_payment",
+      "open_account",
+      "open_orders",
+      "open_wishlist",
+      "order_not_arrived",
+      "refund_status",
+      "remove_address",
+      "remove_coupon",
+      "remove_from_cart",
+      "return_item",
+      "save_for_later",
+      "search",
+      "select_color",
+      "select_size",
+      "set_default_address",
+      "set_quantity",
+      "show_addresses",
+      "show_cart",
+      "show_description",
+      "show_faqs",
+      "show_order_status",
+      "show_orders",
+      "show_price",
+      "show_reviews",
+      "show_similar_items",
+      "sort_items",
+      "start_live_chat",
+      "track_order"
+    ],
+    "model_performance": {
+      "accuracy": 0.92,
+      "f1_score": 0.91,
+      "precision": 0.90,
+      "recall": 0.92,
+      "validation_loss": 0.15
+    }
+  },
+  "deployment_environments": {
+    "development": {
+      "domain": "localhost",
+      "port": 8000,
+      "ssl": false,
+      "debug": true,
+      "log_level": "DEBUG",
+      "replicas": 1
+    },
+    "staging": {
+      "domain": "staging-twi-speech.example.com",
+      "port": 80,
+      "ssl": true,
+      "debug": false,
+      "log_level": "INFO",
+      "replicas": 2
+    },
+    "production": {
+      "domain": "api-twi-speech.example.com",
+      "port": 80,
+      "ssl": true,
+      "debug": false,
+      "log_level": "WARNING",
+      "replicas": 3,
+      "auto_scaling": {
+        "enabled": true,
+        "min_replicas": 2,
+        "max_replicas": 10,
+        "target_cpu_utilization": 70
+      }
+    }
+  },
+  "cloud_deployment": {
+    "aws": {
+      "region": "us-west-2",
+      "ecs_cluster": "twi-speech-cluster",
+      "task_definition": "twi-speech-task",
+      "service_name": "twi-speech-service",
+      "load_balancer": "twi-speech-alb",
+      "target_group": "twi-speech-tg",
+      "ecr_repository": "twi-speech-model"
+    },
+    "kubernetes": {
+      "namespace": "twi-speech",
+      "deployment_name": "twi-speech-deployment",
+      "service_name": "twi-speech-service",
+      "ingress_name": "twi-speech-ingress",
+      "config_map": "twi-speech-config",
+      "secret": "twi-speech-secret"
+    }
+  },
+  "ci_cd": {
+    "github_actions": {
+      "enabled": true,
+      "workflow_file": ".github/workflows/deploy.yml",
+      "auto_deploy_branches": [
+        "main",
+        "develop"
+      ],
+      "environments": [
+        "development",
+        "staging",
+        "production"
+      ]
+    },
+    "quality_gates": {
+      "test_coverage_threshold": 80,
+      "security_scan": true,
+      "performance_benchmarks": true,
+      "model_validation": true
+    }
+  },
+  "backup_and_recovery": {
+    "model_versioning": true,
+    "backup_frequency": "daily",
+    "retention_period_days": 30,
+    "rollback_capability": true
+  },
+  "compliance": {
+    "data_privacy": "GDPR compliant",
+    "model_explainability": false,
+    "audit_logging": true,
+    "data_retention_policy": "30 days"
+  }
+}

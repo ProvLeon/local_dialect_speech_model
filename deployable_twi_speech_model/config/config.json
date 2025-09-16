@@ -1,0 +1,27 @@
+{
+  "model_name": "TwiSpeechIntentClassifier",
+  "version": "1.0.0",
+  "description": "Advanced Twi speech intent recognition model trained on local dialect data",
+  "author": "Local Dialect Speech Team",
+  "license": "MIT",
+  "tags": [
+    "speech-recognition",
+    "twi",
+    "intent-classification",
+    "local-dialect",
+    "africa"
+  ],
+  "created_at": "2025-09-15T21:25:52.830012",
+  "package_version": "1.0.0",
+  "model_type": "intent_only",
+  "architecture": {
+    "has_conv_layers": true,
+    "has_lstm": true,
+    "has_gru": false,
+    "has_attention": true,
+    "has_squeeze_excite": false
+  },
+  "num_classes": 49,
+  "hidden_dim": 128,
+  "input_dim": 39
+}
