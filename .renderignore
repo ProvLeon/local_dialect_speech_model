@@ -1,0 +1,82 @@
+# Render ignore file - exclude files from deployment
+
+# Local deployment scripts (not needed on Render)
+deploy.sh
+start.sh
+complete_pipeline.sh
+setup.sh
+
+# Development and testing files
+test_*.py
+*_test.py
+test_*/
+tests/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git files
+.git/
+.gitignore
+
+# Large data directories not needed for deployment
+data/
+models/
+results/
+temp/
+logs/
+dist/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Documentation (optional, keep if you want docs in deployment)
+*.md
+docs/
+
+# Build artifacts
+build/
+*.egg-info/
+.tox/
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Local configuration files
+.env
+.env.local
+config.local.json
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker files (not needed for Python runtime)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Alternative render configs
+render-main-app.yaml
