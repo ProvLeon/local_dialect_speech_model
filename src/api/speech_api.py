@@ -861,40 +861,19 @@ async def test_intent(
         # Preprocess audio with timeout
         logger.info(f"Starting audio preprocessing for: {tmp_path}")
         start_time_proc = time.time()
-        try:
-            tensor = await asyncio.wait_for(
-                asyncio.to_thread(preprocess_audio, tmp_path, clf),
-                timeout=60.0
-            )
-            logger.info(f"Audio preprocessing completed in {(time.time() - start_time_proc)*1000:.2f}ms")
-        except asyncio.TimeoutError:
-            logger.error(f"Audio preprocessing timed out for: {tmp_path}")
-            raise HTTPException(status_code=408, detail="Audio preprocessing timed out. Please try a shorter or simpler audio file.")
+        tensor = preprocess_audio(tmp_path, clf)
 
-        # Model inference with timeout
-        logger.info("Starting model inference")
-        inference_start = time.time()
-        try:
-            def run_inference():
-                with torch.no_grad():
-                    outputs = clf["model"](tensor)
-                    # Handle tuple output from model (intent_logits, slot_logits)
-                    if isinstance(outputs, tuple):
-                        intent_logits = outputs[0]
-                    else:
-                        intent_logits = outputs
-                    probs = torch.softmax(intent_logits, dim=1)
-                    conf, idx = probs.max(1)
-                    return probs, conf, idx
+        with torch.no_grad():
+            outputs = clf["model"](tensor)
 
-            probs, conf, idx = await asyncio.wait_for(
-                asyncio.to_thread(run_inference),
-                timeout=30.0
-            )
-            logger.info(f"Model inference completed in {(time.time() - inference_start)*1000:.2f}ms")
-        except asyncio.TimeoutError:
-            logger.error("Model inference timed out")
-            raise HTTPException(status_code=408, detail="Model inference timed out. Please try again.")
+            # Handle tuple output from model (intent_logits, slot_logits)
+            if isinstance(outputs, tuple):
+                intent_logits = outputs[0]
+            else:
+                intent_logits = outputs
+
+            probs = torch.softmax(intent_logits, dim=1)
+            conf, idx = probs.max(1)
 
         # Get top-k predictions
         label_map = clf["label_map"]

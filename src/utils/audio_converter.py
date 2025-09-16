@@ -42,30 +42,22 @@ def convert_audio_to_wav(input_path: str, output_path: Optional[str] = None, tim
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_path = tmp.name
 
-    logger.debug(f"Converting audio: {input_path} -> {output_path}")
-
     # Try ffmpeg first for WebM and other complex formats
-    try:
-        if _try_ffmpeg_conversion(input_path, output_path, timeout_seconds):
-            logger.debug(f"FFmpeg conversion successful for: {input_path}")
-            return output_path
-    except Exception as e:
-        logger.debug(f"FFmpeg conversion failed with error: {e}")
+    if _try_ffmpeg_conversion(input_path, output_path):
+        return output_path
 
-    # Try pydub second with timeout
+    # Try pydub second
     if PYDUB_AVAILABLE:
         try:
-            logger.debug(f"Trying pydub conversion for: {input_path}")
-            with timeout_handler(timeout_seconds):
-                # Handle WebM specifically
-                if input_path.lower().endswith('.webm'):
-                    audio = AudioSegment.from_file(input_path, format="webm")
-                else:
-                    audio = AudioSegment.from_file(input_path)
+            # Handle WebM specifically
+            if input_path.lower().endswith('.webm'):
+                audio = AudioSegment.from_file(input_path, format="webm")
+            else:
+                audio = AudioSegment.from_file(input_path)
 
-                audio = audio.set_channels(1)  # mono
-                audio = audio.set_frame_rate(16000)  # 16kHz
-                audio.export(output_path, format="wav")
+            audio = audio.set_channels(1)  # mono
+            audio = audio.set_frame_rate(16000)  # 16kHz
+            audio.export(output_path, format="wav")
             logger.debug(f"Pydub conversion successful: {input_path}")
             return output_path
         except TimeoutError:
@@ -152,8 +144,6 @@ def _try_ffmpeg_conversion(input_path: str, output_path: str, timeout_seconds: i
 def convert_bytes_to_wav(audio_bytes: bytes, filename: str, output_path: Optional[str] = None, timeout_seconds: int = 30) -> Optional[str]:
     """Convert audio bytes to WAV format with timeout handling."""
     input_suffix = Path(filename).suffix or ".wav"
-
-    logger.debug(f"Converting bytes to WAV: {filename} ({len(audio_bytes)} bytes)")
 
     with tempfile.NamedTemporaryFile(suffix=input_suffix, delete=False) as tmp_input:
         tmp_input.write(audio_bytes)

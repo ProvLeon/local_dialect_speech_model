@@ -328,7 +328,7 @@ export async function getModelInfo(opts?: FetchOptions): Promise<ModelInfo | nul
   try {
     const { data } = await safeFetch<ModelInfo>('/model-info', { retry: 2, ...opts });
     return data;
-  } catch (e) {
+  } catch {
     // Model info may not exist—fail gracefully.
     return null;
   }
@@ -533,8 +533,9 @@ export function streamIntentFromBlobCallback(
       : controller.signal;
 
   const done = (async () => {
-    for await (const _ of streamIntentFromBlob(blob, { ...opts, signal: finalSignal })) {
+    for await (const event of streamIntentFromBlob(blob, { ...opts, signal: finalSignal })) {
       // iteration side-effects handled via onEvent
+      void event; // Mark as intentionally unused
     }
   })();
 

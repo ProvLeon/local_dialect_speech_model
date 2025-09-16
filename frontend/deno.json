@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "es6"
+    ],
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  },
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "dev": "deno run --allow-all --node-modules-dir npm:next dev --turbopack",
+    "build": "deno run --allow-all --node-modules-dir npm:next build --turbopack",
+    "start": "deno run --allow-all --node-modules-dir npm:next start",
+    "lint": "deno run --allow-all --node-modules-dir npm:eslint ."
+  },
+  "imports": {
+    "react": "npm:react@19.1.0",
+    "react-dom": "npm:react-dom@19.1.0",
+    "next": "npm:next@15.5.3",
+    "lucide-react": "npm:lucide-react@^0.544.0"
+  },
+  "exclude": [
+    ".next/**",
+    "node_modules/**",
+    "out/**",
+    "build/**"
+  ]
+}

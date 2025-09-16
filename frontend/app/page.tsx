@@ -25,12 +25,13 @@ import {
   getModelInfo,
   testIntent,
   createLiveChunkUploader,
-  streamIntentFromBlobCallback,
+
   formatConfidence,
   summarizeStreamingEvents,
   classifyConfidenceTier,
   type IntentResult,
   type StreamingIntentEvent,
+  type ModelInfo,
 } from "../lib/api";
 import {
   Mic,
@@ -97,7 +98,7 @@ const MAX_HISTORY = 500;
 /* -------------------------------------------------------------------------- */
 export default function Home() {
   const [health, setHealth] = useState<string>("checking");
-  const [modelInfo, setModelInfo] = useState<any>(null);
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -252,28 +253,14 @@ export default function Home() {
       });
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-    } catch (e: any) {
-      setError(e.message || "Upload failed");
+    } catch (e: unknown) {
+      setError((e as Error)?.message || "Upload failed");
     } finally {
       setBusy(false);
     }
   }
 
   /* ----------------------------- Recording Live ----------------------------- */
-  function pickRecorderMime(): string | undefined {
-    const candidates = [
-      "audio/wav",
-      "audio/webm;codecs=opus",
-      "audio/webm",
-      "audio/mp4",
-      "audio/mpeg",
-    ];
-    for (const c of candidates) {
-      if (MediaRecorder.isTypeSupported(c)) return c;
-    }
-    return undefined;
-  }
-
   async function startLiveRecording() {
     setError(null);
     setStreamingMode("live");
@@ -367,7 +354,7 @@ export default function Home() {
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const audioContext = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
           const arrayBuffer = e.target?.result as ArrayBuffer;
           const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
@@ -503,11 +490,11 @@ export default function Home() {
             message: `Intent: ${result.intent}`,
           });
 
-        } catch (error: any) {
+        } catch (error: unknown) {
           addToast({
             type: "error",
             title: "Processing Failed",
-            message: error.message || "Failed to process recording",
+            message: (error as Error)?.message || "Unknown error",
           });
         }
       };
@@ -643,7 +630,7 @@ function Header({
   onTopKChange,
 }: {
   health: string;
-  modelInfo: any;
+  modelInfo: ModelInfo | null;
   topK: number;
   onTopKChange: (k: number) => void;
 }) {
@@ -875,7 +862,7 @@ function InputBar({
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   selectedFile: File | null;
   onFileChange: (e: ChangeEvent<HTMLInputElement>) => void;
-  fileInputRef: React.RefObject<HTMLInputElement>;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
   busy: boolean;
   onAnalyze: () => void;
   isRecording: boolean;
@@ -886,6 +873,7 @@ function InputBar({
   onStopChunk: () => void;
   error: string | null;
   onDismissError: () => void;
+  topK: number;
   streamingSummary: ReturnType<typeof summarizeStreamingEvents> | null;
 }) {
   return (

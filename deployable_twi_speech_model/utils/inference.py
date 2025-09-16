@@ -129,24 +129,10 @@ class AudioProcessor:
         logger.info(f"Processing audio file: {audio_path}")
         start_time = time.time()
 
-        try:
-            # Load audio with timeout
-            audio = self.load_audio(audio_path, timeout_seconds // 2)
+        # Convert to tensor and add batch dimension
+        tensor = torch.FloatTensor(features).unsqueeze(0)
 
-            # Extract features with timeout
-            features = self.extract_features(audio, timeout_seconds // 3)
-
-            # Convert to tensor and add batch dimension
-            tensor = torch.FloatTensor(features).unsqueeze(0)
-
-            process_time = time.time() - start_time
-            logger.info(f"Audio processing completed in {process_time:.2f}s, tensor shape: {tensor.shape}")
-
-            return tensor
-        except Exception as e:
-            process_time = time.time() - start_time
-            logger.error(f"Audio processing failed after {process_time:.2f}s: {e}")
-            raise
+        return tensor
 
 
 class CustomAttention(nn.Module):
@@ -379,9 +365,6 @@ class ModelInference:
 
             # Get label
             predicted_label = self.idx_to_label.get(predicted_idx, f"unknown_{predicted_idx}")
-
-            logger.info(f"Prediction completed in {total_time:.2f}s (inference: {inference_time:.2f}s)")
-            logger.info(f"Result: {predicted_label} (confidence: {confidence:.3f})")
 
             return predicted_label, confidence
 
