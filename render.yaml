@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: starter
     buildCommand: "pip install -r deployable_twi_speech_model/requirements.txt"
-    startCommand: "python debug_render.py"
+    startCommand: "python start_simple_render.py"
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"

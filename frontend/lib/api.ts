@@ -28,7 +28,19 @@
 /* -------------------------------------------------------------------------- */
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, '') || 'http://localhost:8000';
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, '') || 'https://akan-twi-speech-api.onrender.com';
+
+// Debug mode for development
+const DEBUG_MODE = process.env.NEXT_PUBLIC_DEBUG_MODE === 'true';
+
+// Log API configuration
+if (DEBUG_MODE) {
+  console.log('🔧 API Configuration:', {
+    API_BASE_URL,
+    NODE_ENV: process.env.NODE_ENV,
+    DEBUG_MODE
+  });
+}
 
 export interface HealthStatus {
   status: string;
@@ -151,6 +163,10 @@ export async function safeFetch<T = any>(
 ): Promise<SafeFetchResponse<T>> {
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
 
+  if (DEBUG_MODE) {
+    console.log('🌐 API Request:', { url, method: method || (body ? 'POST' : 'GET') });
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -193,9 +209,24 @@ export async function safeFetch<T = any>(
         method: finalMethod,
         body: finalBody,
         signal: controller.signal,
-        headers: finalHeaders,
+        headers: {
+          'Accept': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          ...finalHeaders
+        },
+        mode: 'cors',
+        credentials: 'omit',
         ...init
       });
+
+      if (DEBUG_MODE) {
+        console.log('📡 API Response:', {
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries())
+        });
+      }
 
       const contentType = response.headers.get('content-type') || '';
 

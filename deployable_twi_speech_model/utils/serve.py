@@ -39,9 +39,16 @@ app = FastAPI(title="Speech Model API", version="1.0.0")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=[
+        "http://localhost:3000",
+        "https://localhost:3000",
+        "https://*.vercel.app",
+        "https://*.netlify.app",
+        "https://*.onrender.com",
+        "*"  # Allow all origins for now
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -67,6 +74,11 @@ async def root():
     except Exception as e:
         logger.error(f"Error getting model info: {e}")
         return {"message": "Twi Speech Model API", "status": "running", "error": str(e)}
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle CORS preflight requests."""
+    return {"message": "OK"}
 
 @app.get("/health")
 async def health():
