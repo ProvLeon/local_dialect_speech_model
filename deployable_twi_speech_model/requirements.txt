@@ -5,3 +5,4 @@ soundfile>=0.10.0
 fastapi>=0.68.0
 uvicorn>=0.15.0
 pydantic>=1.8.0
+python-multipart
