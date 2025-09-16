@@ -1,0 +1,62 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NPM_VERSION = "9"
+
+# Environment variables for the frontend
+[context.production.environment]
+  NEXT_PUBLIC_API_BASE_URL = "https://speech-model-eqv4.onrender.com"
+
+[context.deploy-preview.environment]
+  NEXT_PUBLIC_API_BASE_URL = "https://speech-model-eqv4.onrender.com"
+
+[context.branch-deploy.environment]
+  NEXT_PUBLIC_API_BASE_URL = "https://speech-model-eqv4.onrender.com"
+
+# Headers for better security and performance
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"
+
+# Redirects for API calls to backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://speech-model-eqv4.onrender.com/:splat"
+  status = 200
+  force = true
+
+# Redirect root API calls
+[[redirects]]
+  from = "/health"
+  to = "https://speech-model-eqv4.onrender.com/health"
+  status = 200
+
+[[redirects]]
+  from = "/model-info"
+  to = "https://speech-model-eqv4.onrender.com/model-info"
+  status = 200
+
+[[redirects]]
+  from = "/test-intent"
+  to = "https://speech-model-eqv4.onrender.com/test-intent"
+  status = 200
+
+# SPA fallback for client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
