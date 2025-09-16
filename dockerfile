@@ -8,26 +8,30 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libsndfile1 \
+    ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY deployable_twi_speech_model/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy the deployable package
+COPY deployable_twi_speech_model/ ./deployable_twi_speech_model/
 
-# Create directories required by the app
-RUN mkdir -p data/models data/processed
+# Set the working directory to the deployable package
+WORKDIR /app/deployable_twi_speech_model
 
-# Copy model files
-COPY models/best_model.pt data/models_improved/
-COPY models/label_map.npy data/processed_augmented/
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Command to run the application
-# CMD ["python", "app.py", "api"]
-# CMD ["./start.sh"]
-CMD ["uvicorn", "src.api.speech_api:app", "--reload"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the server
+CMD ["python", "utils/serve.py"]
