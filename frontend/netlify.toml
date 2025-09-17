@@ -1,10 +1,10 @@
 [build]
-  command = "deno task build"
+  command = "deno task build:memory-optimized"
   publish = ".next"
 
 [build.environment]
-  NODE_VERSION = "18"
-  NPM_VERSION = "9"
+  DENO_VERSION = "2.1.0"
+  NODE_OPTIONS = "--max-old-space-size=2048"
 
 # Environment variables for the frontend
 [context.production.environment]
