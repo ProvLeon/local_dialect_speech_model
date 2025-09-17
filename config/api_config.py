@@ -7,10 +7,7 @@ API_CONFIG = {
     "debug": False,
     "workers": 4,
     "confidence_threshold": 0.7,
-    "allowed_origins": [
-        "http://localhost:3000",  # Example frontend origin
-        "https://example-ecommerce.com"  # Example production frontend
-    ],
+    "allowed_origins": ["*"],  # Allow all origins for production
     "max_upload_size": 10 * 1024 * 1024,  # 10 MB
     "timeouts": {
         "audio_conversion": 30,  # seconds

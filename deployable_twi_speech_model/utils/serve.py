@@ -8,7 +8,7 @@ import uvicorn
 import logging
 import time
 import asyncio
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
@@ -40,18 +40,19 @@ app = FastAPI(title="Speech Model API", version="1.0.0")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://localhost:3000",
-        "https://*.vercel.app",
-        "https://*.netlify.app",
-        "https://*.onrender.com",
-        "*"  # Allow all origins for now
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],  # Allow all origins for production
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# CORS headers for all responses
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+    "Access-Control-Max-Age": "86400",
+}
 
 # Load model
 try:
@@ -71,33 +72,53 @@ except Exception as e:
 async def root():
     try:
         model_info = model.get_model_info()
-        return {"message": "Twi Speech Model API", "status": "running", "model_info": model_info}
+        return JSONResponse(
+            content={"message": "Twi Speech Model API", "status": "running", "model_info": model_info},
+            headers=CORS_HEADERS
+        )
     except Exception as e:
         logger.error(f"Error getting model info: {e}")
-        return {"message": "Twi Speech Model API", "status": "running", "error": str(e)}
+        return JSONResponse(
+            content={"message": "Twi Speech Model API", "status": "running", "error": str(e)},
+            headers=CORS_HEADERS
+        )
 
 @app.options("/{path:path}")
 async def options_handler(path: str):
     """Handle CORS preflight requests."""
-    return {"message": "OK"}
+    return JSONResponse(
+        content={"message": "OK"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "86400",
+        }
+    )
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
     try:
         health_status = model.health_check()
-        return {
-            "status": "healthy",
-            "message": "Twi Speech Model API is running",
-            "model_health": health_status
-        }
+        return JSONResponse(
+            content={
+                "status": "healthy",
+                "message": "Twi Speech Model API is running",
+                "model_health": health_status
+            },
+            headers=CORS_HEADERS
+        )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {
-            "status": "degraded",
-            "message": "API is running but model health check failed",
-            "error": str(e)
-        }
+        return JSONResponse(
+            content={
+                "status": "degraded",
+                "message": "API is running but model health check failed",
+                "error": str(e)
+            },
+            headers=CORS_HEADERS
+        )
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -128,14 +149,17 @@ async def predict(file: UploadFile = File(...)):
 
         processing_time_ms = (time.time() - start_time) * 1000
 
-        return {
-            "intent": intent,
-            "confidence": float(confidence),
-            "top_predictions": top_predictions,
-            "filename": file.filename,
-            "model_type": "intent_only",
-            "processing_time_ms": round(processing_time_ms, 2)
-        }
+        return JSONResponse(
+            content={
+                "intent": intent,
+                "confidence": float(confidence),
+                "top_predictions": top_predictions,
+                "filename": file.filename,
+                "model_type": "intent_only",
+                "processing_time_ms": round(processing_time_ms, 2)
+            },
+            headers=CORS_HEADERS
+        )
 
     except asyncio.TimeoutError:
         logger.error(f"Request timed out for file: {file.filename}")
@@ -183,15 +207,18 @@ async def test_intent(file: UploadFile = File(...), top_k: int = 5):
 
         processing_time_ms = (time.time() - start_time) * 1000
 
-        return {
-            "intent": intent,
-            "confidence": float(confidence),
-            "top_predictions": top_predictions,
-            "filename": file.filename,
-            "model_type": "intent_only",
-            "processing_time_ms": round(processing_time_ms, 2),
-            "top_k": top_k
-        }
+        return JSONResponse(
+            content={
+                "filename": file.filename,
+                "intent": intent,
+                "confidence": float(confidence),
+                "top_predictions": top_predictions,
+                "model_type": "intent_only",
+                "processing_time_ms": round(processing_time_ms, 2),
+                "top_k": top_k
+            },
+            headers=CORS_HEADERS
+        )
 
     except asyncio.TimeoutError:
         logger.error(f"Request timed out for file: {file.filename}")
@@ -216,7 +243,7 @@ async def model_info():
     try:
         info = model.get_model_info()
         logger.info(f"Model info requested: {info}")
-        return info
+        return JSONResponse(content=info, headers=CORS_HEADERS)
     except Exception as e:
         logger.error(f"Error getting model info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
