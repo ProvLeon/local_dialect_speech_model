@@ -18,7 +18,7 @@ import {
   useState,
   type ChangeEvent,
   type KeyboardEvent,
-} from "react";
+} from "node:react";
 import {
   API_BASE_URL,
   getHealth,
