@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     turbo: {
       memoryLimit: 1536, // Reduced for Netlify constraints
     },
-    optimizePackageImports: ['lucide-react'],
+    // optimizePackageImports: ['lucide-react'],
   },
 
   // Essential for Deno deployment
@@ -73,7 +73,7 @@ const nextConfig: NextConfig = {
   },
 
   // Static generation for better compatibility
-  generateStaticParams: true,
+  // generateStaticParams: true,
 };
 
 export default nextConfig;
