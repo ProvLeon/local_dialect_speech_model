@@ -13,7 +13,7 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react"
   },
-  "nodeModulesDir": "auto",
+  "nodeModulesDir": "true",
   "tasks": {
     "dev": "deno run --allow-all --node-modules-dir --v8-flags=--max-old-space-size=4096 npm:next dev --turbopack",
     "build": "deno run --allow-all --node-modules-dir --v8-flags=--max-old-space-size=4096 npm:next build",
