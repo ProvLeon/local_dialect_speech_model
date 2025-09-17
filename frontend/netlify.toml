@@ -1,5 +1,5 @@
 [build]
-  command = "deno task build:memory-optimized"
+  command = "deno task build"
   publish = ".next"
 
 [build.environment]
