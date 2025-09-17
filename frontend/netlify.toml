@@ -1,10 +1,14 @@
 [build]
-  command = "deno task build"
+  command = "chmod +x netlify-build.sh && ./netlify-build.sh"
   publish = ".next"
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF . || exit 1"
 
 [build.environment]
   DENO_VERSION = "2.1.0"
-  NODE_OPTIONS = "--max-old-space-size=2048"
+  NODE_OPTIONS = "--max-old-space-size=1536"
+  DENO_V8_FLAGS = "--max-old-space-size=1536,--optimize-for-size"
+  NETLIFY_SKIP_YARN = "true"
+  NETLIFY_SKIP_NPM = "true"
 
 # Environment variables for the frontend
 [context.production.environment]
