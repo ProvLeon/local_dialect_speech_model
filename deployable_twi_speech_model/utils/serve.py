@@ -146,6 +146,15 @@ async def predict(file: UploadFile = File(...)):
         except asyncio.TimeoutError:
             logger.error(f"Prediction timed out for file: {file.filename}")
             raise HTTPException(status_code=408, detail="Prediction timed out. Please try a shorter audio file.")
+        except Exception as prediction_error:
+            logger.error(f"Prediction error: {prediction_error}")
+            # Handle specific model inference errors
+            if "features" in str(prediction_error):
+                raise HTTPException(status_code=400, detail="Failed to process audio features. Please check your audio file format.")
+            elif "CUDA" in str(prediction_error) or "device" in str(prediction_error):
+                raise HTTPException(status_code=500, detail="Model device error. Please try again.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Model inference failed: {str(prediction_error)}")
 
         processing_time_ms = (time.time() - start_time) * 1000
 
@@ -168,7 +177,12 @@ async def predict(file: UploadFile = File(...)):
         logger.error(f"Error in predict endpoint: {e}")
         if "timed out" in str(e).lower() or "timeout" in str(e).lower():
             raise HTTPException(status_code=408, detail="Processing timed out. Please try a shorter audio file.")
-        raise HTTPException(status_code=500, detail=str(e))
+        elif "features" in str(e).lower():
+            raise HTTPException(status_code=400, detail="Audio processing failed. Please check your audio file format and try again.")
+        elif "not defined" in str(e).lower():
+            raise HTTPException(status_code=500, detail="Internal processing error. The service is experiencing issues.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
     finally:
         # Clean up
         if tmp_path and os.path.exists(tmp_path):
@@ -204,6 +218,15 @@ async def test_intent(file: UploadFile = File(...), top_k: int = 5):
         except asyncio.TimeoutError:
             logger.error(f"Prediction timed out for file: {file.filename}")
             raise HTTPException(status_code=408, detail="Prediction timed out. Please try a shorter audio file.")
+        except Exception as prediction_error:
+            logger.error(f"Prediction error: {prediction_error}")
+            # Handle specific model inference errors
+            if "features" in str(prediction_error):
+                raise HTTPException(status_code=400, detail="Failed to process audio features. Please check your audio file format.")
+            elif "CUDA" in str(prediction_error) or "device" in str(prediction_error):
+                raise HTTPException(status_code=500, detail="Model device error. Please try again.")
+            else:
+                raise HTTPException(status_code=500, detail=f"Model inference failed: {str(prediction_error)}")
 
         processing_time_ms = (time.time() - start_time) * 1000
 
@@ -227,7 +250,12 @@ async def test_intent(file: UploadFile = File(...), top_k: int = 5):
         logger.error(f"Error in test-intent endpoint: {e}")
         if "timed out" in str(e).lower() or "timeout" in str(e).lower():
             raise HTTPException(status_code=408, detail="Processing timed out. Please try a shorter audio file.")
-        raise HTTPException(status_code=500, detail=str(e))
+        elif "features" in str(e).lower():
+            raise HTTPException(status_code=400, detail="Audio processing failed. Please check your audio file format and try again.")
+        elif "not defined" in str(e).lower():
+            raise HTTPException(status_code=500, detail="Internal processing error. The service is experiencing issues.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
     finally:
         # Clean up
         if tmp_path and os.path.exists(tmp_path):

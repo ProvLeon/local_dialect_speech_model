@@ -129,10 +129,24 @@ class AudioProcessor:
         logger.info(f"Processing audio file: {audio_path}")
         start_time = time.time()
 
-        # Convert to tensor and add batch dimension
-        tensor = torch.FloatTensor(features).unsqueeze(0)
+        try:
+            # Load audio with timeout
+            audio = self.load_audio(audio_path, timeout_seconds // 2)
 
-        return tensor
+            # Extract features with timeout
+            features = self.extract_features(audio, timeout_seconds // 3)
+
+            # Convert to tensor and add batch dimension
+            tensor = torch.FloatTensor(features).unsqueeze(0)
+
+            process_time = time.time() - start_time
+            logger.info(f"Audio processing completed in {process_time:.2f}s, tensor shape: {tensor.shape}")
+
+            return tensor
+        except Exception as e:
+            process_time = time.time() - start_time
+            logger.error(f"Audio processing failed after {process_time:.2f}s: {e}")
+            raise
 
 
 class CustomAttention(nn.Module):
