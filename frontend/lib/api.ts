@@ -371,7 +371,7 @@ export async function testIntent(
     const { data } = await safeFetch<IntentResult>(url, {
       method: 'POST',
       body: fd,
-      timeoutMs: 30000, // 30 second timeout for audio processing
+      timeoutMs: 120000, // 2 minute timeout for WebM audio processing
       ...opts
     });
 

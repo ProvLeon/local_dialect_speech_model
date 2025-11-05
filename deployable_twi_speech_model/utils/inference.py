@@ -14,6 +14,7 @@ import logging
 import time
 from contextlib import contextmanager
 import concurrent.futures
+import subprocess
 from pathlib import Path
 from typing import Tuple, Dict, Any, List
 import warnings
@@ -58,15 +59,108 @@ class AudioProcessor:
         finally:
             pass
 
+    def _convert_webm_to_wav(self, input_path: str, output_path: str) -> bool:
+        """Convert WebM/Opus file to WAV using ffmpeg."""
+        try:
+            # Use ffmpeg to convert WebM to WAV
+            cmd = [
+                "ffmpeg",
+                "-i",
+                input_path,
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-y",  # Overwrite output file
+                output_path,
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+
+            if result.returncode == 0:
+                logger.info(f"Successfully converted WebM to WAV: {output_path}")
+                return True
+            else:
+                logger.warning(f"FFmpeg conversion failed: {result.stderr}")
+                return False
+
+        except subprocess.TimeoutExpired:
+            logger.warning("FFmpeg conversion timed out")
+            return False
+        except FileNotFoundError:
+            logger.warning("FFmpeg not found - falling back to direct librosa loading")
+            return False
+        except Exception as e:
+            logger.warning(f"FFmpeg conversion error: {e}")
+            return False
+
+    def _load_audio_with_fallback(self, audio_path: str) -> Tuple[np.ndarray, int]:
+        """Load audio with multiple fallback methods for WebM files."""
+        try:
+            # First try: Direct librosa load
+            return librosa.load(audio_path, sr=self.sr, duration=self.duration)
+        except Exception as e:
+            logger.warning(f"Direct librosa load failed: {e}")
+
+            # Second try: Force mono and resample
+            try:
+                audio, sr = librosa.load(
+                    audio_path, sr=None, mono=False, duration=self.duration
+                )
+                if audio.ndim > 1:
+                    audio = np.mean(audio, axis=0)  # Convert to mono
+                if sr != self.sr:
+                    audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sr)
+                return audio, self.sr
+            except Exception as e2:
+                logger.warning(f"Fallback librosa load failed: {e2}")
+
+                # Third try: Use soundfile if available
+                try:
+                    import soundfile as sf
+
+                    audio, sr = sf.read(audio_path, dtype="float32")
+                    if audio.ndim > 1:
+                        audio = np.mean(audio, axis=1)
+                    if sr != self.sr:
+                        audio = librosa.resample(audio, orig_sr=sr, target_sr=self.sr)
+                    if len(audio) > int(self.sr * self.duration):
+                        audio = audio[: int(self.sr * self.duration)]
+                    return audio, self.sr
+                except ImportError:
+                    logger.warning("soundfile not available")
+                except Exception as e3:
+                    logger.warning(f"soundfile load failed: {e3}")
+
+                # Final fallback: re-raise original error
+                raise e
+
     def load_audio(self, audio_path: str, timeout_seconds: int = 30) -> np.ndarray:
         """Load and preprocess audio file with timeout handling."""
         try:
             logger.info(f"Loading audio file: {audio_path}")
             start_time = time.time()
 
+            # Check if file is WebM and try to convert first
+            converted_path = None
+            is_webm_file = audio_path.endswith(".webm") or (
+                audio_path.endswith(".wav") and "webm" in str(audio_path).lower()
+            )
+
+            if is_webm_file:
+                # Try to convert WebM to WAV first
+                converted_path = audio_path.replace(".webm", "_converted.wav").replace(
+                    ".wav", "_converted.wav"
+                )
+                if self._convert_webm_to_wav(audio_path, converted_path):
+                    audio_path = converted_path
+                    logger.info(f"Using converted file: {converted_path}")
+
             # Use ThreadPoolExecutor for timeout handling instead of signals
             def _load_audio_task():
-                return librosa.load(audio_path, sr=self.sr, duration=self.duration)
+                return self._load_audio_with_fallback(audio_path)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(_load_audio_task)
@@ -103,6 +197,16 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"Error loading audio {audio_path}: {e}")
             raise
+        finally:
+            # Clean up converted file if created
+            if converted_path and Path(converted_path).exists():
+                try:
+                    Path(converted_path).unlink()
+                    logger.debug(f"Cleaned up converted file: {converted_path}")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"Failed to cleanup {converted_path}: {cleanup_error}"
+                    )
 
     def extract_features(
         self, audio: np.ndarray, timeout_seconds: int = 15

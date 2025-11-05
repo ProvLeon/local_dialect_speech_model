@@ -321,7 +321,7 @@ export default function Home() {
       recordedChunksRef.current = [];
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = async (ev) => {
-        if (ev.data && ev.data.size > 5000 && liveUploaderRef.current) { // Min 5KB chunks
+        if (ev.data && ev.data.size > 15000 && liveUploaderRef.current) { // Min 15KB chunks for better quality
           try {
             // Skip conversion for WebM/Opus since backend can handle it
             // and conversion often fails with incomplete chunks
@@ -329,14 +329,14 @@ export default function Home() {
 
             console.log(`Processing audio chunk: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
 
-            // Only send if blob is valid size
-            if (audioBlob.size > 1000) {
+            // Only send if blob is valid size (larger threshold for WebM)
+            if (audioBlob.size > 10000) {
               await liveUploaderRef.current.push(audioBlob);
             }
           } catch (error) {
             console.warn('Failed to process audio chunk:', error);
-            // Still try to send original data on processing failure
-            if (ev.data.size > 1000) {
+            // Still try to send original data on processing failure (if large enough)
+            if (ev.data.size > 10000) {
               await liveUploaderRef.current.push(ev.data);
             }
           }
@@ -355,7 +355,7 @@ export default function Home() {
       };
       // Start recording with error handling
       try {
-        recorder.start(2000); // 2 second chunks for better quality
+        recorder.start(5000); // 5 second chunks to reduce server load
         setIsRecording(true);
         recordingStartRef.current = performance.now();
         recordingTimerRef.current = window.setInterval(() => {
