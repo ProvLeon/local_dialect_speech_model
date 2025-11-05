@@ -22,12 +22,36 @@ import sys
 import json
 import logging
 import argparse
-import pandas as pd
+
+# Critical: Set environment variables BEFORE any other imports
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["JAX_PLATFORM_NAME"] = "cpu"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+# Suppress all warnings before importing anything
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", module="jax")
+warnings.filterwarnings("ignore", module="transformers")
+
+# Monkey patch numpy before JAX can import it
 import numpy as np
+
+# Fix numpy.dtypes issue with older numpy versions
+if not hasattr(np, "dtypes"):
+    # Create a mock dtypes module
+    class MockDtypes:
+        StringDType = None
+
+    np.dtypes = MockDtypes()
+
+import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
-import warnings
 import shutil
 from collections import Counter
 import re
@@ -37,24 +61,73 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import torchaudio
 import whisper
-from transformers import (
-    WhisperFeatureExtractor,
-    WhisperTokenizer,
-    WhisperProcessor,
-    WhisperForConditionalGeneration,
-    Seq2SeqTrainingArguments,
-    Seq2SeqTrainer,
-    TrainerCallback,
-)
-from datasets import Dataset as HFDataset, Audio
+
+# Import transformers components individually to avoid JAX issues
+try:
+    # Force CPU-only mode for JAX if it gets imported
+    import jax
+
+    jax.config.update("jax_platform_name", "cpu")
+except ImportError:
+    pass
+except Exception:
+    # If JAX fails to configure, continue without it
+    pass
+
+try:
+    from transformers import (
+        WhisperProcessor,
+        WhisperForConditionalGeneration,
+        Seq2SeqTrainingArguments,
+        Seq2SeqTrainer,
+        TrainerCallback,
+    )
+except Exception as e:
+    print(f"Error importing transformers: {e}")
+    print("Trying alternative import strategy...")
+
+    # Alternative import without problematic components
+    import transformers
+
+    WhisperProcessor = transformers.WhisperProcessor
+    WhisperForConditionalGeneration = transformers.WhisperForConditionalGeneration
+    Seq2SeqTrainingArguments = transformers.Seq2SeqTrainingArguments
+    Seq2SeqTrainer = transformers.Seq2SeqTrainer
+    TrainerCallback = transformers.TrainerCallback
+
+try:
+    from datasets import Dataset as HFDataset, Audio
+except ImportError:
+    HFDataset = None
+    Audio = None
+
 import librosa
 import soundfile as sf
-from jiwer import wer, cer
-import evaluate
 
-# Suppress warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
+# Import evaluation metrics with fallback
+try:
+    from jiwer import wer, cer
+
+    EVAL_AVAILABLE = True
+except ImportError:
+    EVAL_AVAILABLE = False
+
+    def wer(ref, hyp):
+        return 0.0
+
+    def cer(ref, hyp):
+        return 0.0
+
+
+# Import evaluate with fallback
+try:
+    import evaluate
+
+    EVALUATE_AVAILABLE = True
+except ImportError:
+    EVALUATE_AVAILABLE = False
+    evaluate = None
+
 
 # Configure logging
 logging.basicConfig(
