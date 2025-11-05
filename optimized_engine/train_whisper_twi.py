@@ -23,30 +23,83 @@ import json
 import logging
 import argparse
 
-# Critical: Set environment variables BEFORE any other imports
+
+# Critical: Block JAX completely by hijacking its import
+class MockJax:
+    def __getattr__(self, name):
+        return self
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def config(self, *args, **kwargs):
+        pass
+
+    def update(self, *args, **kwargs):
+        pass
+
+    class numpy:
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+
+class MockJaxNumpy:
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: None
+
+
+# Block JAX import at the sys.modules level before any other imports
+sys.modules["jax"] = MockJax()
+sys.modules["jax.numpy"] = MockJaxNumpy()
+sys.modules["jax.core"] = MockJax()
+sys.modules["jax._src"] = MockJax()
+sys.modules["jax._src.core"] = MockJax()
+sys.modules["jax._src.dtypes"] = MockJax()
+sys.modules["jaxlib"] = MockJax()
+
+# Set environment variables
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["JAX_ENABLE_X64"] = "false"
 
-# Suppress all warnings before importing anything
+# Suppress all warnings
 import warnings
 
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", module="jax")
-warnings.filterwarnings("ignore", module="transformers")
+warnings.filterwarnings("ignore")
 
-# Monkey patch numpy before JAX can import it
+# Fix numpy compatibility before any transformers imports
 import numpy as np
 
-# Fix numpy.dtypes issue with older numpy versions
+
+# Comprehensive numpy.dtypes fix
+class MockStringDType:
+    def __init__(self, *args, **kwargs):
+        self.name = "string"
+
+    def __call__(self, *args, **kwargs):
+        return MockStringDType()
+
+    def __str__(self):
+        return "StringDType"
+
+    def __repr__(self):
+        return "StringDType()"
+
+
 if not hasattr(np, "dtypes"):
-    # Create a mock dtypes module
+
     class MockDtypes:
-        StringDType = None
+        StringDType = MockStringDType()
+
+        def __getattr__(self, name):
+            return MockStringDType()
 
     np.dtypes = MockDtypes()
+else:
+    # Patch existing dtypes
+    if not hasattr(np.dtypes, "StringDType") or np.dtypes.StringDType is None:
+        np.dtypes.StringDType = MockStringDType()
 
 import pandas as pd
 from pathlib import Path
@@ -63,17 +116,7 @@ import torchaudio
 import whisper
 
 # Import transformers components individually to avoid JAX issues
-try:
-    # Force CPU-only mode for JAX if it gets imported
-    import jax
-
-    jax.config.update("jax_platform_name", "cpu")
-except ImportError:
-    pass
-except Exception:
-    # If JAX fails to configure, continue without it
-    pass
-
+# Now safely import transformers
 try:
     from transformers import (
         WhisperProcessor,
@@ -82,18 +125,12 @@ try:
         Seq2SeqTrainer,
         TrainerCallback,
     )
+
+    print("✓ Transformers imported successfully")
 except Exception as e:
-    print(f"Error importing transformers: {e}")
-    print("Trying alternative import strategy...")
-
-    # Alternative import without problematic components
-    import transformers
-
-    WhisperProcessor = transformers.WhisperProcessor
-    WhisperForConditionalGeneration = transformers.WhisperForConditionalGeneration
-    Seq2SeqTrainingArguments = transformers.Seq2SeqTrainingArguments
-    Seq2SeqTrainer = transformers.Seq2SeqTrainer
-    TrainerCallback = transformers.TrainerCallback
+    print(f"❌ Failed to import transformers: {e}")
+    # Fallback to minimal functionality
+    sys.exit(1)
 
 try:
     from datasets import Dataset as HFDataset, Audio
@@ -119,14 +156,9 @@ except ImportError:
         return 0.0
 
 
-# Import evaluate with fallback
-try:
-    import evaluate
-
-    EVALUATE_AVAILABLE = True
-except ImportError:
-    EVALUATE_AVAILABLE = False
-    evaluate = None
+# Import evaluate with fallback (skip to avoid JAX issues)
+EVALUATE_AVAILABLE = False
+evaluate = None
 
 
 # Configure logging
