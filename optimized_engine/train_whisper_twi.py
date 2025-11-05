@@ -43,6 +43,32 @@ from torch.utils.data import Dataset
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
+# Fix for numpy.dtypes error when using older numpy with newer jax/transformers
+# This can happen in environments like Kaggle.
+if not hasattr(np, "dtypes"):
+
+    class MockStringDType:
+        def __init__(self, *args, **kwargs):
+            self.name = "string"
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        def __str__(self):
+            return "StringDType"
+
+        def __repr__(self):
+            return "StringDType()"
+
+    class MockDtypes:
+        StringDType = MockStringDType()
+
+        def __getattr__(self, name):
+            return MockStringDType()
+
+    np.dtypes = MockDtypes()
+
+
 # Set environment variables for CPU-only mode if needed, but preferably use trainer args
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
