@@ -86,44 +86,33 @@ def check_data_availability():
 
 
 def install_dependencies():
-    """Install required dependencies."""
-    logger.info("📦 Installing training dependencies...")
-
-    # Core training dependencies
-    training_deps = [
-        "torch>=2.0.0",
-        "transformers>=4.30.0",
-        "datasets>=2.12.0",
-        "librosa>=0.10.0",
-        "soundfile>=0.12.0",
-        "jiwer",
-        "evaluate",
-        "accelerate",
-        "pandas",
-        "numpy",
-        "scikit-learn",
-    ]
+    """Install required dependencies from requirements_clean.txt."""
+    logger.info("📦 Installing training dependencies from requirements_clean.txt...")
+    
+    requirements_file = Path(__file__).parent / "requirements_clean.txt"
+    if not requirements_file.exists():
+        logger.error(f"❌ {requirements_file} not found!")
+        return False
 
     try:
-        for dep in training_deps:
-            logger.info(f"Installing {dep}...")
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", dep],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
+        cmd = [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600, # Increased timeout for pip install
+        )
 
-            if result.returncode != 0:
-                logger.warning(f"⚠️ Failed to install {dep}: {result.stderr}")
-            else:
-                logger.info(f"✅ Installed {dep}")
+        if result.returncode != 0:
+            logger.error(f"⚠️ Failed to install dependencies: {result.stderr}")
+            return False
+        else:
+            logger.info(f"✅ Dependencies installed successfully.")
+            return True
 
     except Exception as e:
         logger.error(f"❌ Dependency installation failed: {e}")
         return False
-
-    return True
 
 
 def train_whisper_model(quick=False):
