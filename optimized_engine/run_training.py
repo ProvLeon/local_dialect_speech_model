@@ -49,7 +49,7 @@ def check_data_availability():
     base_dir = Path(__file__).parent
     project_root = base_dir.parent
     data_dir = project_root / "data" / "raw"
-    prompts_file = project_root / "prompts_lean.csv.csv"
+    prompts_file = project_root / "prompts_lean.csv"
 
     issues = []
 
