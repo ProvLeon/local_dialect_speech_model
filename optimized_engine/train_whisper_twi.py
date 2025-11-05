@@ -294,10 +294,36 @@ accelerate_submodules = [
 for submodule in accelerate_submodules:
     full_name = f"accelerate.{submodule}"
     mock_mod = ModuleType(full_name)
-    mock_mod.__spec__ = types.ModuleType(full_name)
+    # Provide a proper ModuleSpec if possible
+    try:
+        from importlib.machinery import ModuleSpec
+
+        mock_mod.__spec__ = ModuleSpec(full_name, loader=None)
+    except Exception:
+        mock_mod.__spec__ = None
     mock_mod.__file__ = f"<mock {full_name}>"
     mock_mod.__package__ = "accelerate"
-    mock_mod.clear_device_cache = lambda: None
+    mock_mod.__path__ = []  # mark as package for submodules
+    setattr(mock_mod, "__all__", [])
+
+    # Minimal no-op to satisfy calls
+    def _noop(*args, **kwargs):
+        return None
+
+    # Commonly expected symbols per submodule
+    if submodule == "utils":
+        mock_mod.clear_device_cache = _noop
+    if submodule == "accelerator":
+
+        class _Accelerator:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __getattr__(self, name):
+                return _noop
+
+        mock_mod.Accelerator = _Accelerator
+
     sys.modules[full_name] = mock_mod
 
 sys.modules["accelerate"] = accelerate_module
