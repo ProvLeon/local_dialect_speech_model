@@ -1,0 +1,65 @@
+# Optimized Twi Speech Recognition Engine Requirements
+# ===================================================
+
+# Core ML and Audio Processing
+torch>=2.0.0,<2.1.0
+torchaudio>=2.0.0,<2.1.0
+openai-whisper>=20231117
+numpy>=1.21.0
+librosa>=0.10.0
+soundfile>=0.12.0
+scipy>=1.9.0
+
+# NLP and Transformers (compatible with PyTorch 2.0)
+transformers>=4.30.0,<4.35.0
+datasets>=2.12.0
+tokenizers>=0.13.0
+huggingface-hub>=0.15.0,<0.20.0
+
+# Web Framework and API
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+starlette>=0.27.0
+
+# HTTP and Networking
+httpx>=0.24.0
+aiofiles>=23.0.0
+aiohttp>=3.8.0
+
+# Data Processing and Utilities
+pandas>=1.5.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+tqdm>=4.65.0
+
+# Audio Format Support
+pydub>=0.25.0
+mutagen>=1.46.0
+audioread>=3.0.0
+
+# Configuration and Logging
+pyyaml>=6.0
+python-dotenv>=1.0.0
+colorlog>=6.7.0
+
+# Performance and Monitoring
+psutil>=5.9.0
+memory-profiler>=0.60.0
+py-cpuinfo>=9.0.0
+
+# Development and Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+
+# Optional GPU acceleration
+nvidia-ml-py3>=7.352.0
+
+# Deployment
+gunicorn>=21.0.0

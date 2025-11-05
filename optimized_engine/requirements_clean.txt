@@ -1,0 +1,48 @@
+# Clean Requirements - Compatible Versions
+# =======================================
+# This file contains carefully selected versions that work together
+# without dependency conflicts for Whisper fine-tuning on Twi data
+
+# Core Python packages with compatible versions
+numpy>=1.21.0,<1.25.0
+scipy>=1.9.0,<1.11.0
+
+# PyTorch ecosystem (compatible set)
+torch==2.0.0
+torchaudio==2.0.0
+
+# Audio processing
+librosa>=0.9.0,<0.11.0
+soundfile>=0.10.0,<0.13.0
+openai-whisper>=20231117
+
+# HuggingFace ecosystem (compatible versions)
+transformers>=4.30.0,<4.35.0
+tokenizers>=0.13.0,<0.15.0
+huggingface-hub>=0.15.0,<0.18.0
+datasets>=2.12.0,<2.15.0
+accelerate>=0.20.0,<0.25.0
+
+# Machine learning utilities
+scikit-learn>=1.2.0,<1.4.0
+evaluate>=0.4.0
+
+# Audio evaluation
+jiwer>=2.2.0
+
+# Data processing
+pandas>=1.5.0
+matplotlib>=3.6.0,<3.8.0
+
+# Web framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+
+# File system utilities
+fsspec>=2023.1.0,<=2023.10.0
+
+# Development utilities
+tqdm>=4.64.0
+pyyaml>=6.0
