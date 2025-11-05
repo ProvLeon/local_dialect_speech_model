@@ -151,7 +151,7 @@ else:
 
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, cast
 from dataclasses import dataclass
 import shutil
 from collections import Counter
@@ -271,8 +271,8 @@ accelerate_module = ModuleType("accelerate")
 accelerate_module.__spec__ = types.ModuleType("accelerate")
 accelerate_module.__file__ = "<mock accelerate>"
 accelerate_module.__package__ = "accelerate"
-accelerate_module.clear_device_cache = lambda: None
-accelerate_module.Accelerator = CompleteMockModule("Accelerator")
+setattr(accelerate_module, "clear_device_cache", lambda: None)
+setattr(accelerate_module, "Accelerator", CompleteMockModule("Accelerator"))
 
 # Mock all accelerate submodules
 accelerate_submodules = [
@@ -312,7 +312,7 @@ for submodule in accelerate_submodules:
 
     # Commonly expected symbols per submodule
     if submodule == "utils":
-        mock_mod.clear_device_cache = _noop
+        setattr(mock_mod, "clear_device_cache", _noop)
 
     if submodule == "hooks":
 
@@ -329,9 +329,9 @@ for submodule in accelerate_submodules:
         def remove_hook_from_module(*args, **kwargs):
             return None
 
-        mock_mod.AlignDevicesHook = AlignDevicesHook
-        mock_mod.add_hook_to_module = add_hook_to_module
-        mock_mod.remove_hook_from_module = remove_hook_from_module
+        setattr(mock_mod, "AlignDevicesHook", AlignDevicesHook)
+        setattr(mock_mod, "add_hook_to_module", add_hook_to_module)
+        setattr(mock_mod, "remove_hook_from_module", remove_hook_from_module)
 
     if submodule == "accelerator":
 
@@ -342,7 +342,7 @@ for submodule in accelerate_submodules:
             def __getattr__(self, name):
                 return _noop
 
-        mock_mod.Accelerator = _Accelerator
+        setattr(mock_mod, "Accelerator", _Accelerator)
 
     sys.modules[full_name] = mock_mod
 
