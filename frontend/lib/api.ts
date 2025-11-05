@@ -351,17 +351,50 @@ export async function testIntent(
     fd = input;
   } else {
     fd = new FormData();
-    fd.append('file', input, (input as File).name || 'audio.wav');
+    const filename = (input as File).name || 'audio.wav';
+    fd.append('file', input, filename);
+
+    if (DEBUG_MODE) {
+      console.log('🎤 Preparing intent test:', {
+        fileSize: input.size,
+        fileType: input.type,
+        filename,
+        topK
+      });
+    }
   }
 
   const query = new URLSearchParams({ top_k: String(topK) });
-  const { data } = await safeFetch<IntentResult>(`/test-intent?${query.toString()}`, {
-    method: 'POST',
-    body: fd,
-    ...opts
-  });
+  const url = `/test-intent?${query.toString()}`;
 
-  return data;
+  try {
+    const { data } = await safeFetch<IntentResult>(url, {
+      method: 'POST',
+      body: fd,
+      timeoutMs: 30000, // 30 second timeout for audio processing
+      ...opts
+    });
+
+    if (DEBUG_MODE) {
+      console.log('🎯 Intent result:', {
+        intent: data.intent,
+        confidence: data.confidence,
+        predictions: data.top_predictions?.length || 0
+      });
+    }
+
+    return data;
+  } catch (error) {
+    console.error('💥 Intent test failed:', {
+      url: `${API_BASE_URL}${url}`,
+      error: error instanceof ApiError ? {
+        status: error.status,
+        message: error.message,
+        data: error.data
+      } : error?.toString()
+    });
+    throw error;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -589,7 +622,19 @@ export function createLiveChunkUploader({
     async push(blob: Blob | File) {
       if (aborted) return;
       const fd = new FormData();
-      fd.append('file', blob, (blob as File).name || filenameBuilder(index));
+      const filename = (blob as File).name || filenameBuilder(index);
+      fd.append('file', blob, filename);
+
+      // Debug logging for audio upload
+      if (DEBUG_MODE) {
+        console.log(`🎵 Uploading audio chunk ${index}:`, {
+          size: blob.size,
+          type: blob.type,
+          filename,
+          topK
+        });
+      }
+
       try {
         const result = await testIntent(fd, topK);
         const evt: StreamingIntentEvent = {
@@ -601,8 +646,25 @@ export function createLiveChunkUploader({
           raw: result,
           ...(transformResult?.(result, index) || {})
         };
+
+        if (DEBUG_MODE) {
+          console.log(`✅ Audio chunk ${index} processed:`, {
+            intent: result.intent,
+            confidence: result.confidence,
+            predictions: result.top_predictions?.length || 0
+          });
+        }
+
         onResult?.(evt);
       } catch (e: any) {
+        console.error(`❌ Audio chunk ${index} failed:`, {
+          error: e?.message,
+          status: e?.status,
+          blobSize: blob.size,
+          blobType: blob.type,
+          apiError: e instanceof ApiError ? e.data : null
+        });
+
         const apiErr = e instanceof ApiError ? e : new ApiError({
           name: 'UploadError',
           message: e?.message || 'Unknown error',

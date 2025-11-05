@@ -13,10 +13,10 @@ from pathlib import Path
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
 
 def check_environment():
     """Check if we're running on Render and set up environment"""
@@ -52,7 +52,7 @@ def check_environment():
         deployable_path / "utils" / "serve.py",
         deployable_path / "requirements.txt",
         deployable_path / "model",
-        deployable_path / "config"
+        deployable_path / "config",
     ]
 
     missing_files = [f for f in required_files if not f.exists()]
@@ -64,6 +64,7 @@ def check_environment():
 
     logger.info("All required files found")
     return port, deployable_path
+
 
 def install_dependencies(deployable_path):
     """Install required dependencies"""
@@ -77,14 +78,17 @@ def install_dependencies(deployable_path):
 
     try:
         # Read requirements to see what we're installing
-        with open(requirements_path, 'r') as f:
+        with open(requirements_path, "r") as f:
             requirements = f.read().strip()
         logger.info(f"Installing packages: {requirements.replace(chr(10), ', ')}")
 
         # Install with verbose output
-        result = subprocess.run([
-            sys.executable, "-m", "pip", "install", "-r", str(requirements_path)
-        ], capture_output=True, text=True, timeout=300)
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", str(requirements_path)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
 
         if result.returncode != 0:
             logger.error(f"Failed to install dependencies: {result.stderr}")
@@ -99,6 +103,7 @@ def install_dependencies(deployable_path):
         logger.error(f"Error installing dependencies: {e}")
         sys.exit(1)
 
+
 def verify_imports(deployable_path):
     """Verify that all required modules can be imported"""
     logger.info("Verifying imports...")
@@ -108,19 +113,24 @@ def verify_imports(deployable_path):
 
     try:
         import torch
+
         logger.info(f"PyTorch version: {torch.__version__}")
         logger.info(f"CUDA available: {torch.cuda.is_available()}")
 
         import fastapi
+
         logger.info(f"FastAPI version: {fastapi.__version__}")
 
         import uvicorn
+
         logger.info("Uvicorn imported successfully")
 
         import librosa
+
         logger.info(f"Librosa version: {librosa.__version__}")
 
         import numpy
+
         logger.info(f"NumPy version: {numpy.__version__}")
 
         # Test if we can import the serve module
@@ -130,6 +140,7 @@ def verify_imports(deployable_path):
         # Try importing the inference module
         try:
             from inference import ModelInference
+
             logger.info("ModelInference imported successfully")
         except ImportError as e:
             logger.warning(f"Could not import ModelInference: {e}")
@@ -140,6 +151,7 @@ def verify_imports(deployable_path):
     except ImportError as e:
         logger.error(f"Failed to import required module: {e}")
         return False
+
 
 def start_server():
     """Start the FastAPI server"""
@@ -175,13 +187,13 @@ def start_server():
                 logger.info("Executing serve.py...")
 
                 # Read and execute the serve.py file
-                with open(serve_file, 'r') as f:
+                with open(serve_file, "r") as f:
                     serve_code = f.read()
 
                 # Create a proper execution environment
                 serve_globals = {
-                    '__name__': '__main__',
-                    '__file__': str(serve_file),
+                    "__name__": "__main__",
+                    "__file__": str(serve_file),
                 }
 
                 exec(serve_code, serve_globals)
@@ -203,7 +215,9 @@ def start_server():
                     app,
                     host="0.0.0.0",
                     port=int(port),
-                    log_level="info"
+                    log_level="info",
+                    workers=1,
+                    loop="asyncio",
                 )
 
             except Exception as fallback_error:
@@ -218,6 +232,7 @@ def start_server():
         # Restore original working directory
         os.chdir(original_cwd)
 
+
 def health_check():
     """Simple health check for debugging"""
     logger.info("=== Health Check ===")
@@ -230,6 +245,7 @@ def health_check():
     for var in important_env_vars:
         value = os.environ.get(var, "Not set")
         logger.info(f"{var}: {value}")
+
 
 if __name__ == "__main__":
     # Check if this is a health check call
@@ -246,5 +262,6 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

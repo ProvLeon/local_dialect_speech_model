@@ -290,27 +290,55 @@ export default function Home() {
         },
       });
 
-      // Force WAV format for better backend compatibility
-      const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/wav') ? 'audio/wav' : 'audio/webm;codecs=opus'
-      });
+      // Use best supported format with fallback chain
+      let selectedMimeType = 'audio/webm;codecs=opus'; // Most compatible fallback
+      const supportedTypes = [
+        'audio/wav',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg;codecs=opus'
+      ];
+
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          selectedMimeType = type;
+          console.log(`Selected audio format: ${selectedMimeType}`);
+          break;
+        }
+      }
+
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, {
+          mimeType: selectedMimeType
+        });
+      } catch {
+        console.warn(`Failed to create MediaRecorder with ${selectedMimeType}, using default`);
+        recorder = new MediaRecorder(stream); // Use browser default
+      }
 
       recordedChunksRef.current = [];
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = async (ev) => {
         if (ev.data && ev.data.size > 5000 && liveUploaderRef.current) { // Min 5KB chunks
           try {
-            // Convert to proper WAV if needed
-            let audioBlob = ev.data;
-            if (!ev.data.type.includes('wav')) {
-              audioBlob = await convertToWAV(ev.data);
-            }
+            // Skip conversion for WebM/Opus since backend can handle it
+            // and conversion often fails with incomplete chunks
+            const audioBlob = ev.data;
+
+            console.log(`Processing audio chunk: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
+
             // Only send if blob is valid size
             if (audioBlob.size > 1000) {
               await liveUploaderRef.current.push(audioBlob);
             }
-          } catch (conversionError) {
-            console.warn('Failed to convert chunk:', conversionError);
+          } catch (error) {
+            console.warn('Failed to process audio chunk:', error);
+            // Still try to send original data on processing failure
+            if (ev.data.size > 1000) {
+              await liveUploaderRef.current.push(ev.data);
+            }
           }
         }
       };
@@ -325,24 +353,33 @@ export default function Home() {
         });
         liveUploaderRef.current?.abort();
       };
-      recorder.start(2000); // 2 second chunks for better quality
-      setIsRecording(true);
-      recordingStartRef.current = performance.now();
-      recordingTimerRef.current = window.setInterval(() => {
-        if (recordingStartRef.current) {
-          setRecordingElapsed(performance.now() - recordingStartRef.current);
-        }
-      }, 250);
-      addToast({
-        type: "info",
-        title: "Live Recording Started",
-        message: "Speaking into microphone...",
-      });
-    } catch {
+      // Start recording with error handling
+      try {
+        recorder.start(2000); // 2 second chunks for better quality
+        setIsRecording(true);
+        recordingStartRef.current = performance.now();
+        recordingTimerRef.current = window.setInterval(() => {
+          if (recordingStartRef.current) {
+            setRecordingElapsed(performance.now() - recordingStartRef.current);
+          }
+        }, 250);
+        addToast({
+          type: "info",
+          title: "Live Recording Started",
+          message: `Recording with ${selectedMimeType} format`,
+        });
+      } catch (recordError) {
+        console.error('Failed to start MediaRecorder:', recordError);
+        stream.getTracks().forEach((t) => t.stop());
+        const errorMessage = recordError instanceof Error ? recordError.message : 'Unknown error';
+        throw new Error('Failed to start recording: ' + errorMessage);
+      }
+    } catch (error) {
+      console.error('Live recording setup failed:', error);
       addToast({
         type: "error",
-        title: "Microphone Access Failed",
-        message: "Please check permissions and try again.",
+        title: "Recording Setup Failed",
+        message: error instanceof Error ? error.message : "Please check microphone permissions and try again.",
       });
       setStreamingMode(null);
     }
@@ -351,21 +388,49 @@ export default function Home() {
   // Helper function to convert audio to WAV
   async function convertToWAV(audioBlob: Blob): Promise<Blob> {
     return new Promise((resolve, reject) => {
+      // Check if blob is already WAV format
+      if (audioBlob.type.includes('wav')) {
+        resolve(audioBlob);
+        return;
+      }
+
+      // Check minimum size for conversion
+      if (audioBlob.size < 5000) {
+        reject(new Error('Audio chunk too small for reliable conversion'));
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
           const audioContext = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
           const arrayBuffer = e.target?.result as ArrayBuffer;
-          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+          // Add timeout for decoding to prevent hanging
+          const decodePromise = audioContext.decodeAudioData(arrayBuffer);
+          const timeoutPromise = new Promise((_, timeoutReject) => {
+            setTimeout(() => timeoutReject(new Error('Audio decode timeout')), 5000);
+          });
+
+          const audioBuffer = await Promise.race([decodePromise, timeoutPromise]) as AudioBuffer;
+
+          // Validate decoded audio buffer
+          if (!audioBuffer || audioBuffer.length === 0 || audioBuffer.numberOfChannels === 0) {
+            throw new Error('Invalid decoded audio buffer');
+          }
 
           // Convert to WAV format
           const wavBlob = audioBufferToWav(audioBuffer);
           resolve(wavBlob);
         } catch (error) {
+          console.warn('Audio conversion failed:', error);
           reject(error);
         }
       };
-      reader.onerror = reject;
+      reader.onerror = (error) => {
+        console.warn('FileReader error during conversion:', error);
+        reject(error);
+      };
       reader.readAsArrayBuffer(audioBlob);
     });
   }
