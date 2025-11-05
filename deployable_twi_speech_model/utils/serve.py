@@ -8,7 +8,7 @@ import uvicorn
 import logging
 import time
 import asyncio
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Response
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
@@ -59,6 +59,7 @@ CORS_HEADERS = {
 }
 
 # Load model
+model_path = None
 try:
     model_path = Path(__file__).parent.parent
     logger.info(f"Loading model from: {model_path}")
@@ -68,10 +69,11 @@ try:
     logger.info(f"Model info: {model.get_model_info()}")
 except Exception as e:
     logger.error(f"Failed to load model: {e}")
-    logger.error(f"Model path attempted: {model_path}")
-    logger.error(
-        f"Available files: {list(model_path.iterdir()) if model_path.exists() else 'Path does not exist'}"
-    )
+    if model_path:
+        logger.error(f"Model path attempted: {model_path}")
+        logger.error(
+            f"Available files: {list(model_path.iterdir()) if model_path.exists() else 'Path does not exist'}"
+        )
     raise
 
 
