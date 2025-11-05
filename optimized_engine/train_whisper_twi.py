@@ -32,6 +32,21 @@ class MockJax:
     def __call__(self, *args, **kwargs):
         return self
 
+    def __iter__(self):
+        return iter([])
+
+    def __len__(self):
+        return 0
+
+    def __getitem__(self, key):
+        return self
+
+    def __bool__(self):
+        return False
+
+    def __contains__(self, item):
+        return False
+
     def config(self, *args, **kwargs):
         pass
 
@@ -42,10 +57,22 @@ class MockJax:
         def __getattr__(self, name):
             return lambda *args, **kwargs: None
 
+        def __iter__(self):
+            return iter([])
+
+        def __len__(self):
+            return 0
+
 
 class MockJaxNumpy:
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
+
+    def __iter__(self):
+        return iter([])
+
+    def __len__(self):
+        return 0
 
 
 # Block JAX import at the sys.modules level before any other imports
@@ -57,11 +84,14 @@ sys.modules["jax._src.core"] = MockJax()
 sys.modules["jax._src.dtypes"] = MockJax()
 sys.modules["jaxlib"] = MockJax()
 
-# Set environment variables
+# Set environment variables for CPU-only mode
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["JAX_ENABLE_X64"] = "false"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Suppress all warnings
 import warnings
@@ -115,7 +145,54 @@ from torch.utils.data import Dataset, DataLoader
 import torchaudio
 import whisper
 
+# Force CPU-only mode for PyTorch to avoid CUDA issues
+torch.cuda.is_available = lambda: False
+if hasattr(torch.backends, "mps"):
+    torch.backends.mps.is_available = lambda: False
+
+
 # Import transformers components individually to avoid JAX issues
+# Mock accelerate to avoid import errors
+class MockAccelerate:
+    def clear_device_cache(self):
+        pass
+
+    def __getattr__(self, name):
+        return self
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __iter__(self):
+        return iter([])
+
+    def __len__(self):
+        return 0
+
+
+class MockAccelerateUtils:
+    def clear_device_cache(self):
+        pass
+
+    def __getattr__(self, name):
+        return self
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __iter__(self):
+        return iter([])
+
+    def __len__(self):
+        return 0
+
+
+# Mock all accelerate modules that might cause issues
+sys.modules["accelerate"] = MockAccelerate()
+sys.modules["accelerate.utils"] = MockAccelerateUtils()
+sys.modules["accelerate.state"] = MockAccelerate()
+sys.modules["accelerate.accelerator"] = MockAccelerate()
+
 # Now safely import transformers
 try:
     from transformers import (
@@ -129,8 +206,32 @@ try:
     print("✓ Transformers imported successfully")
 except Exception as e:
     print(f"❌ Failed to import transformers: {e}")
-    # Fallback to minimal functionality
-    sys.exit(1)
+    print("Trying alternative import approach...")
+
+    # Try to import one by one to identify the problematic component
+    try:
+        from transformers import WhisperProcessor
+        from transformers import WhisperForConditionalGeneration
+
+        print("✓ Whisper components imported")
+
+        # Use basic trainer if Seq2Seq fails
+        try:
+            from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer
+
+            print("✓ Seq2Seq trainer imported")
+        except Exception:
+            print("⚠️ Using basic trainer fallback")
+            from transformers import TrainingArguments as Seq2SeqTrainingArguments
+            from transformers import Trainer as Seq2SeqTrainer
+
+        from transformers import TrainerCallback
+
+        print("✓ All transformers components loaded")
+
+    except Exception as e2:
+        print(f"❌ Complete failure: {e2}")
+        sys.exit(1)
 
 try:
     from datasets import Dataset as HFDataset, Audio
@@ -396,10 +497,18 @@ class TwiWhisperTrainer:
         self.processor = WhisperProcessor.from_pretrained(self.config.model_name)
         self.tokenizer = self.processor.tokenizer
 
-        # Load model
-        self.model = WhisperForConditionalGeneration.from_pretrained(
-            self.config.model_name
-        )
+        # Load model with CPU-only device mapping
+        try:
+            self.model = WhisperForConditionalGeneration.from_pretrained(
+                self.config.model_name, device_map="cpu", torch_dtype=torch.float32
+            )
+        except Exception:
+            # Fallback without device_map if it causes issues
+            self.model = WhisperForConditionalGeneration.from_pretrained(
+                self.config.model_name, torch_dtype=torch.float32
+            )
+            # Manually move to CPU
+            self.model = self.model.to("cpu")
 
         # Set language and task
         self.model.config.forced_decoder_ids = None
@@ -630,7 +739,10 @@ class TwiWhisperTrainer:
             greater_is_better=False,
             push_to_hub=False,
             dataloader_num_workers=0,  # Avoid multiprocessing issues
-            fp16=torch.cuda.is_available(),
+            fp16=False,  # Disable fp16 for CPU training
+            bf16=False,  # Disable bf16 for CPU training
+            use_cpu=True,  # Force CPU usage
+            no_cuda=True,  # Disable CUDA
             predict_with_generate=True,
             generation_max_length=448,
             save_total_limit=3,
