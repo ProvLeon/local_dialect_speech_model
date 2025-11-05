@@ -273,6 +273,20 @@ accelerate_module.__file__ = "<mock accelerate>"
 accelerate_module.__package__ = "accelerate"
 setattr(accelerate_module, "clear_device_cache", lambda: None)
 setattr(accelerate_module, "Accelerator", CompleteMockModule("Accelerator"))
+# Add accelerate API shims needed by transformers/peft
+setattr(
+    accelerate_module,
+    "dispatch_model",
+    lambda *args, **kwargs: args[0] if args else None,
+)
+setattr(accelerate_module, "init_empty_weights", lambda *args, **kwargs: None)
+setattr(accelerate_module, "infer_auto_device_map", lambda *args, **kwargs: {})
+setattr(accelerate_module, "get_balanced_memory", lambda *args, **kwargs: {})
+setattr(
+    accelerate_module,
+    "load_checkpoint_and_dispatch",
+    lambda *args, **kwargs: args[0] if args else None,
+)
 
 # Mock all accelerate submodules
 accelerate_submodules = [
@@ -313,6 +327,20 @@ for submodule in accelerate_submodules:
     # Commonly expected symbols per submodule
     if submodule == "utils":
         setattr(mock_mod, "clear_device_cache", _noop)
+        # Mirror accelerate API on utils as some imports come from accelerate.utils
+        setattr(mock_mod, "get_balanced_memory", lambda *args, **kwargs: {})
+        setattr(mock_mod, "infer_auto_device_map", lambda *args, **kwargs: {})
+        setattr(mock_mod, "init_empty_weights", lambda *args, **kwargs: None)
+        setattr(
+            mock_mod,
+            "dispatch_model",
+            lambda *args, **kwargs: args[0] if args else None,
+        )
+        setattr(
+            mock_mod,
+            "load_checkpoint_and_dispatch",
+            lambda *args, **kwargs: args[0] if args else None,
+        )
 
     if submodule == "hooks":
 
@@ -343,6 +371,13 @@ for submodule in accelerate_submodules:
                 return _noop
 
         setattr(mock_mod, "Accelerator", _Accelerator)
+    # Some functions are imported from accelerate.big_modeling
+    if submodule == "big_modeling":
+        setattr(
+            mock_mod,
+            "load_checkpoint_and_dispatch",
+            lambda *args, **kwargs: args[0] if args else None,
+        )
 
     sys.modules[full_name] = mock_mod
 
