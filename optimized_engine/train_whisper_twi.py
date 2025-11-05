@@ -229,33 +229,77 @@ class MockAccelerateUtils:
         return False
 
 
-# Mock all accelerate modules that might cause issues
-mock_accelerate = MockAccelerate()
-mock_utils = MockAccelerateUtils()
-
-sys.modules["accelerate"] = mock_accelerate
-sys.modules["accelerate.utils"] = mock_utils
-sys.modules["accelerate.state"] = mock_accelerate
-sys.modules["accelerate.accelerator"] = mock_accelerate
-sys.modules["accelerate.hooks"] = mock_accelerate
-sys.modules["accelerate.big_modeling"] = mock_accelerate
-sys.modules["accelerate.checkpointing"] = mock_accelerate
-sys.modules["accelerate.commands"] = mock_accelerate
-sys.modules["accelerate.data_loader"] = mock_accelerate
-sys.modules["accelerate.logging"] = mock_accelerate
-sys.modules["accelerate.optimizer"] = mock_accelerate
-sys.modules["accelerate.scheduler"] = mock_accelerate
-sys.modules["accelerate.tracking"] = mock_accelerate
-sys.modules["accelerate.test_utils"] = mock_accelerate
-
-# Also mock accelerate functions that might be imported directly
+# Create complete mock modules with proper attributes
 import types
+from types import ModuleType
 
-accelerate_module = types.ModuleType("accelerate")
+
+class CompleteMockModule:
+    def __init__(self, name="MockModule"):
+        self.__name__ = name
+        self.__spec__ = types.ModuleType(name)
+        self.__file__ = f"<mock {name}>"
+        self.__package__ = name
+
+    def __getattr__(self, name):
+        return CompleteMockModule(f"{self.__name__}.{name}")
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __iter__(self):
+        return iter([])
+
+    def __len__(self):
+        return 0
+
+    def __bool__(self):
+        return False
+
+    def __str__(self):
+        return ""
+
+    def __repr__(self):
+        return f"CompleteMockModule({self.__name__})"
+
+    def __contains__(self, item):
+        return False
+
+
+# Create complete accelerate module with all necessary attributes
+accelerate_module = ModuleType("accelerate")
+accelerate_module.__spec__ = types.ModuleType("accelerate")
+accelerate_module.__file__ = "<mock accelerate>"
+accelerate_module.__package__ = "accelerate"
 accelerate_module.clear_device_cache = lambda: None
-accelerate_module.__dict__.update(
-    {name: mock_accelerate for name in dir(mock_accelerate)}
-)
+accelerate_module.Accelerator = CompleteMockModule("Accelerator")
+
+# Mock all accelerate submodules
+accelerate_submodules = [
+    "utils",
+    "state",
+    "accelerator",
+    "hooks",
+    "big_modeling",
+    "checkpointing",
+    "commands",
+    "data_loader",
+    "logging",
+    "optimizer",
+    "scheduler",
+    "tracking",
+    "test_utils",
+]
+
+for submodule in accelerate_submodules:
+    full_name = f"accelerate.{submodule}"
+    mock_mod = ModuleType(full_name)
+    mock_mod.__spec__ = types.ModuleType(full_name)
+    mock_mod.__file__ = f"<mock {full_name}>"
+    mock_mod.__package__ = "accelerate"
+    mock_mod.clear_device_cache = lambda: None
+    sys.modules[full_name] = mock_mod
+
 sys.modules["accelerate"] = accelerate_module
 
 # Now safely import transformers
