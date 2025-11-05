@@ -139,12 +139,12 @@ class AudioProcessor:
 
     def load_audio(self, audio_path: str, timeout_seconds: int = 30) -> np.ndarray:
         """Load and preprocess audio file with timeout handling."""
+        converted_path = None
         try:
             logger.info(f"Loading audio file: {audio_path}")
             start_time = time.time()
 
             # Check if file is WebM and try to convert first
-            converted_path = None
             is_webm_file = audio_path.endswith(".webm") or (
                 audio_path.endswith(".wav") and "webm" in str(audio_path).lower()
             )
