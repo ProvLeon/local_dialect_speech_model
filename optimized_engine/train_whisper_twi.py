@@ -313,6 +313,26 @@ for submodule in accelerate_submodules:
     # Commonly expected symbols per submodule
     if submodule == "utils":
         mock_mod.clear_device_cache = _noop
+
+    if submodule == "hooks":
+
+        class AlignDevicesHook:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __call__(self, *args, **kwargs):
+                return None
+
+        def add_hook_to_module(*args, **kwargs):
+            return None
+
+        def remove_hook_from_module(*args, **kwargs):
+            return None
+
+        mock_mod.AlignDevicesHook = AlignDevicesHook
+        mock_mod.add_hook_to_module = add_hook_to_module
+        mock_mod.remove_hook_from_module = remove_hook_from_module
+
     if submodule == "accelerator":
 
         class _Accelerator:
