@@ -47,6 +47,12 @@ class MockJax:
     def __contains__(self, item):
         return False
 
+    def __str__(self):
+        return ""
+
+    def __repr__(self):
+        return "MockJax()"
+
     def config(self, *args, **kwargs):
         pass
 
@@ -63,6 +69,12 @@ class MockJax:
         def __len__(self):
             return 0
 
+        def __str__(self):
+            return ""
+
+        def __repr__(self):
+            return "MockJaxNumpy()"
+
 
 class MockJaxNumpy:
     def __getattr__(self, name):
@@ -73,6 +85,12 @@ class MockJaxNumpy:
 
     def __len__(self):
         return 0
+
+    def __str__(self):
+        return ""
+
+    def __repr__(self):
+        return "MockJaxNumpy()"
 
 
 # Block JAX import at the sys.modules level before any other imports
@@ -169,6 +187,18 @@ class MockAccelerate:
     def __len__(self):
         return 0
 
+    def __str__(self):
+        return ""
+
+    def __repr__(self):
+        return "MockAccelerate()"
+
+    def __bool__(self):
+        return False
+
+    def __contains__(self, item):
+        return False
+
 
 class MockAccelerateUtils:
     def clear_device_cache(self):
@@ -186,12 +216,47 @@ class MockAccelerateUtils:
     def __len__(self):
         return 0
 
+    def __str__(self):
+        return ""
+
+    def __repr__(self):
+        return "MockAccelerateUtils()"
+
+    def __bool__(self):
+        return False
+
+    def __contains__(self, item):
+        return False
+
 
 # Mock all accelerate modules that might cause issues
-sys.modules["accelerate"] = MockAccelerate()
-sys.modules["accelerate.utils"] = MockAccelerateUtils()
-sys.modules["accelerate.state"] = MockAccelerate()
-sys.modules["accelerate.accelerator"] = MockAccelerate()
+mock_accelerate = MockAccelerate()
+mock_utils = MockAccelerateUtils()
+
+sys.modules["accelerate"] = mock_accelerate
+sys.modules["accelerate.utils"] = mock_utils
+sys.modules["accelerate.state"] = mock_accelerate
+sys.modules["accelerate.accelerator"] = mock_accelerate
+sys.modules["accelerate.hooks"] = mock_accelerate
+sys.modules["accelerate.big_modeling"] = mock_accelerate
+sys.modules["accelerate.checkpointing"] = mock_accelerate
+sys.modules["accelerate.commands"] = mock_accelerate
+sys.modules["accelerate.data_loader"] = mock_accelerate
+sys.modules["accelerate.logging"] = mock_accelerate
+sys.modules["accelerate.optimizer"] = mock_accelerate
+sys.modules["accelerate.scheduler"] = mock_accelerate
+sys.modules["accelerate.tracking"] = mock_accelerate
+sys.modules["accelerate.test_utils"] = mock_accelerate
+
+# Also mock accelerate functions that might be imported directly
+import types
+
+accelerate_module = types.ModuleType("accelerate")
+accelerate_module.clear_device_cache = lambda: None
+accelerate_module.__dict__.update(
+    {name: mock_accelerate for name in dir(mock_accelerate)}
+)
+sys.modules["accelerate"] = accelerate_module
 
 # Now safely import transformers
 try:
