@@ -140,11 +140,11 @@ class TwiWhisperConfig:
 
     # Training configuration
     num_epochs: int = 10
-    batch_size: int = 4
+    batch_size: int = 2
     learning_rate: float = 5e-6  # Lowered for training stability
     warmup_steps: int = 500
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 4
+    gradient_accumulation_steps: int = 8
 
     # Audio processing
     sample_rate: int = 16000
@@ -591,6 +591,7 @@ class TwiWhisperTrainer:
             per_device_train_batch_size=self.config.batch_size,
             per_device_eval_batch_size=self.config.batch_size,
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            gradient_checkpointing=True,  # Memory-saving technique
             learning_rate=self.config.learning_rate,
             warmup_steps=self.config.warmup_steps,
             weight_decay=self.config.weight_decay,
