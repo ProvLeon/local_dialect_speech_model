@@ -70,7 +70,7 @@ def check_data_availability():
         try:
             import pandas as pd
 
-            df = pd.read_csv(prompts_file)
+            df = pd.read_csv(prompts_file, comment="#")
             logger.info(f"✅ Found {len(df)} prompts in CSV")
         except Exception as e:
             issues.append(f"Invalid prompts file: {e}")

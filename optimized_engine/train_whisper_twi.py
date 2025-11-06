@@ -4,7 +4,7 @@ Whisper Fine-tuning Pipeline for Twi Speech Recognition
 ======================================================
 
 This script fine-tunes OpenAI's Whisper model on Twi audio data using the
-recorded audio files and corresponding transcriptions from twi_prompts.csv.
+recorded audio files and corresponding transcriptions from prompts_lean.csv.
 
 Based on the TwiWhisperModel approach but adapted for your specific dataset
 and intent classification use case.
@@ -713,7 +713,7 @@ def main():
     )
     parser.add_argument(
         "--prompts_file",
-        default="../twi_prompts.csv",
+        default="../prompts_lean.csv",
         help="CSV file with prompts and transcriptions",
     )
     parser.add_argument(
