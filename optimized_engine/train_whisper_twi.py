@@ -566,77 +566,48 @@ class TwiWhisperTrainer:
         # Data collator
         data_collator = TwiWhisperDataCollator(self.processor)
 
-                # Detect GPU availability
+        # Detect GPU availability
 
-                use_cuda = torch.cuda.is_available()
+        use_cuda = torch.cuda.is_available()
 
-                fp16_enabled = use_cuda # Only enable fp16 if CUDA is available
+        fp16_enabled = use_cuda  # Only enable fp16 if CUDA is available
 
-                
+        if use_cuda:
+            logger.info(
+                "🚀 GPU detected! Training will use CUDA with mixed precision (FP16)."
+            )
 
-                if use_cuda:
+        else:
+            logger.warning("⚠️ No GPU detected. Training will proceed on CPU.")
 
-                    logger.info("🚀 GPU detected! Training will use CUDA with mixed precision (FP16).")
+        # Training arguments
 
-                else:
-
-                    logger.warning("⚠️ No GPU detected. Training will proceed on CPU.")
-
-        
-
-                # Training arguments
-
-                training_args = Seq2SeqTrainingArguments(
-
-                    output_dir=self.config.output_dir,
-
-                    per_device_train_batch_size=self.config.batch_size,
-
-                    per_device_eval_batch_size=self.config.batch_size,
-
-                    gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-
-                    learning_rate=self.config.learning_rate,
-
-                    warmup_steps=self.config.warmup_steps,
-
-                    weight_decay=self.config.weight_decay,
-
-                    num_train_epochs=self.config.num_epochs,
-
-                    evaluation_strategy="steps",
-
-                    eval_steps=self.config.eval_steps,
-
-                    save_steps=self.config.save_steps,
-
-                    logging_steps=self.config.logging_steps,
-
-                    report_to=self.config.report_to,
-
-                    load_best_model_at_end=True,
-
-                    metric_for_best_model="wer",
-
-                    greater_is_better=False,
-
-                    push_to_hub=False,
-
-                    dataloader_num_workers=0,  # Avoid multiprocessing issues
-
-                    fp16=fp16_enabled,  # Dynamically enable mixed precision
-
-                    no_cuda=not use_cuda, # Dynamically set no_cuda
-
-                    predict_with_generate=True,
-
-                    generation_max_length=448,
-
-                    save_total_limit=3,
-
-                    max_grad_norm=1.0, # Add gradient clipping for stability
-
-                )
+        training_args = Seq2SeqTrainingArguments(
+            output_dir=self.config.output_dir,
+            per_device_train_batch_size=self.config.batch_size,
+            per_device_eval_batch_size=self.config.batch_size,
+            gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            learning_rate=self.config.learning_rate,
+            warmup_steps=self.config.warmup_steps,
+            weight_decay=self.config.weight_decay,
+            num_train_epochs=self.config.num_epochs,
+            evaluation_strategy="steps",
+            eval_steps=self.config.eval_steps,
+            save_steps=self.config.save_steps,
+            logging_steps=self.config.logging_steps,
+            report_to=self.config.report_to,
+            load_best_model_at_end=True,
+            metric_for_best_model="wer",
+            greater_is_better=False,
+            push_to_hub=False,
+            dataloader_num_workers=0,  # Avoid multiprocessing issues
+            fp16=fp16_enabled,  # Dynamically enable mixed precision
+            no_cuda=not use_cuda,  # Dynamically set no_cuda
+            predict_with_generate=True,
+            generation_max_length=448,
+            save_total_limit=3,
+            max_grad_norm=1.0,  # Add gradient clipping for stability
+        )
 
         # Initialize trainer
         trainer = Seq2SeqTrainer(
