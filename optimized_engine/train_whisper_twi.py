@@ -130,7 +130,7 @@ class TwiWhisperConfig:
 
     # Data paths
     data_dir: str = "../data/raw"
-    prompts_file: str = "../twi_prompts.csv"
+    prompts_file: str = "../prompts_lean.csv"
     output_dir: str = "./models/whisper_twi"
     cache_dir: str = "./data/cache"
 
