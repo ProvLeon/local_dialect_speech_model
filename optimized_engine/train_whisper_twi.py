@@ -43,6 +43,10 @@ from torch.utils.data import Dataset
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
+# Set environment variable to manage memory fragmentation
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+
+
 # Fix for numpy.dtypes error when using older numpy with newer jax/transformers
 # This can happen in environments like Kaggle.
 if not hasattr(np, "dtypes"):
@@ -136,11 +140,11 @@ class TwiWhisperConfig:
 
     # Training configuration
     num_epochs: int = 10
-    batch_size: int = 8
+    batch_size: int = 4
     learning_rate: float = 5e-6  # Lowered for training stability
     warmup_steps: int = 500
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 2
+    gradient_accumulation_steps: int = 4
 
     # Audio processing
     sample_rate: int = 16000
@@ -622,6 +626,8 @@ class TwiWhisperTrainer:
 
         # Train
         logger.info("Starting training...")
+        if use_cuda:
+            torch.cuda.empty_cache()
         trainer.train()
 
         # Save final model
