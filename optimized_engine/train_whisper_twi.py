@@ -137,7 +137,7 @@ class TwiWhisperConfig:
     # Training configuration
     num_epochs: int = 10
     batch_size: int = 8
-    learning_rate: float = 1e-5
+    learning_rate: float = 5e-6  # Lowered for training stability
     warmup_steps: int = 500
     weight_decay: float = 0.01
     gradient_accumulation_steps: int = 2
@@ -593,6 +593,7 @@ class TwiWhisperTrainer:
             predict_with_generate=True,
             generation_max_length=448,
             save_total_limit=3,
+            max_grad_norm=1.0,  # Add gradient clipping for stability
         )
 
         # Initialize trainer
