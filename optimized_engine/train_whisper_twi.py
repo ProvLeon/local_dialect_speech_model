@@ -671,7 +671,7 @@ class TwiWhisperTrainer:
                     logger.info(f"Processing test sample {i}/{len(test_dataset)}")
 
                 # Prepare input
-                input_features = sample["input_features"].unsqueeze(0)
+                input_features = sample["input_features"].unsqueeze(0).to(self.model.device)
 
                 # Generate
                 predicted_ids = self.model.generate(
