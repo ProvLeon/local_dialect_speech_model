@@ -127,16 +127,26 @@ def train_whisper_model(quick=False):
         return False
 
     # Training parameters
-    model_size = "tiny" if quick else "small"
     epochs = 3 if quick else 10
     batch_size = 4 if quick else 8
     eval_steps = 50 if quick else 500
+    model_size = "tiny" if quick else "small"
+
+    local_model_path = base_dir / "local_models" / f"whisper-{model_size}"
+    
+    cmd_args = []
+    if local_model_path.exists():
+        logger.info(f"✅ Found local model: {local_model_path}, using it for training.")
+        cmd_args.extend(["--model_name", str(local_model_path)])
+    else:
+        logger.info(f"Local model not found at {local_model_path}.")
+        logger.info(f"Will download '{model_size}' model from Hugging Face.")
+        cmd_args.extend(["--model_size", model_size])
 
     cmd = [
         sys.executable,
         str(script_path),
-        "--model_size",
-        model_size,
+        *cmd_args,
         "--epochs",
         str(epochs),
         "--batch_size",
