@@ -28,6 +28,31 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
+# Fix for numpy.dtypes error when using older numpy with newer jax/transformers
+# This can happen in environments like Kaggle.
+if not hasattr(np, "dtypes"):
+
+    class MockStringDType:
+        def __init__(self, *args, **kwargs):
+            self.name = "string"
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        def __str__(self):
+            return "StringDType"
+
+        def __repr__(self):
+            return "StringDType()"
+
+    class MockDtypes:
+        StringDType = MockStringDType()
+
+        def __getattr__(self, name):
+            return MockStringDType()
+
+    np.dtypes = MockDtypes()
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -99,7 +124,7 @@ class TwiWhisperConfig:
 
     # Logging
     logging_steps: int = 50
-    report_to: str = "none"
+    report_to: str = "tensorboard"
 
     # Intent classification
     num_intent_labels: int = 0
@@ -404,6 +429,7 @@ class TwiWhisperTrainer:
             greater_is_better=False,
             fp16=torch.cuda.is_available(),
             predict_with_generate=True,
+            logging_dir=f"{self.config.output_dir}/logs",
         )
 
         # Trainer
@@ -436,6 +462,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
+    parser.add_argument("--report_to", default="tensorboard", help="Logging backend (e.g., tensorboard, wandb)")
     args = parser.parse_args()
 
     config = TwiWhisperConfig(
@@ -444,6 +471,7 @@ def main():
         num_epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
+        report_to=args.report_to,
     )
 
     trainer = TwiWhisperTrainer(config)
