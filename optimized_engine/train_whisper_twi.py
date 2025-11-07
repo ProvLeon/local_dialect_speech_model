@@ -104,11 +104,11 @@ class TwiWhisperConfig:
 
     # Training configuration
     num_epochs: int = 15
-    batch_size: int = 8
+    batch_size: int = 4 # Reduced batch size
     learning_rate: float = 1e-5
     warmup_steps: int = 100
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 2
+    gradient_accumulation_steps: int = 4 # Increased gradient accumulation steps
     intent_loss_weight: float = 0.5
 
     # Audio processing
@@ -438,6 +438,7 @@ class TwiWhisperTrainer:
             fp16=torch.cuda.is_available(),
             predict_with_generate=True,
             logging_dir=f"{self.config.output_dir}/logs",
+            gradient_checkpointing=True, # Enabled gradient checkpointing
         )
 
         # Trainer
