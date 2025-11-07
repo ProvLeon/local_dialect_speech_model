@@ -14,16 +14,16 @@ Author: AI Assistant
 Date: 2025-11-07
 """
 
-import os
-import sys
+import argparse
 import json
 import logging
-import argparse
+import os
 import re
 import shutil
+import sys
 import warnings
 from collections import Counter
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -53,29 +53,33 @@ if not hasattr(np, "dtypes"):
             return MockStringDType()
 
     np.dtypes = MockDtypes()
+import librosa
 import pandas as pd
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import Dataset
-
-import librosa
 from transformers import (
-    WhisperForConditionalGeneration,
-    WhisperProcessor,
-    Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
-    WhisperPreTrainedModel,
-    WhisperModel,
+    Seq2SeqTrainingArguments,
     WhisperConfig,
+    WhisperForConditionalGeneration,
+    WhisperModel,
+    WhisperPreTrainedModel,
+    WhisperProcessor,
 )
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 try:
-    from jiwer import wer, cer
+    from jiwer import cer, wer
 except ImportError:
-    def wer(ref, hyp): return 0.0
-    def cer(ref, hyp): return 0.0
+
+    def wer(ref, hyp):
+        return 0.0
+
+    def cer(ref, hyp):
+        return 0.0
+
 
 # Configure logging
 logging.basicConfig(
@@ -87,11 +91,15 @@ logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
+
 @dataclass
 class TwiWhisperConfig:
     """Configuration for Twi Whisper multi-task fine-tuning."""
+
     # Model configuration
-    model_name: str = "openai/whisper-tiny" # Changed to a smaller model to reduce memory usage
+    model_name: str = (
+        "openai/whisper-tiny"  # Changed to a smaller model to reduce memory usage
+    )
     model_size: str = "small"
     language: str = "tw"
     task: str = "transcribe"
@@ -134,6 +142,7 @@ class TwiWhisperConfig:
 
 class WhisperForSpeechClassification(WhisperPreTrainedModel):
     """Whisper model with a sequence classification head."""
+
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
@@ -149,7 +158,9 @@ class WhisperForSpeechClassification(WhisperPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
         encoder_outputs = self.whisper.encoder(
             input_features,
             attention_mask=attention_mask,
@@ -163,7 +174,7 @@ class WhisperForSpeechClassification(WhisperPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-1) # Ignore samples with label -1
+            loss_fct = CrossEntropyLoss(ignore_index=-1)  # Ignore samples with label -1
             loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
@@ -177,8 +188,10 @@ class WhisperForSpeechClassification(WhisperPreTrainedModel):
             attentions=encoder_outputs.attentions,
         )
 
+
 class WhisperForMultiTask(WhisperPreTrainedModel):
     """A multi-task model combining transcription and classification."""
+
     def __init__(self, config):
         super().__init__(config)
         self.transcription_model = WhisperForConditionalGeneration(config)
@@ -210,6 +223,7 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
 
 class TwiAudioDataset(Dataset):
     """Dataset for Twi audio, transcriptions, and intents."""
+
     def __init__(
         self,
         audio_paths: List[str],
@@ -229,7 +243,9 @@ class TwiAudioDataset(Dataset):
 
     def _filter_valid_samples(self):
         valid_indices = []
-        for i, (audio_path, trans) in enumerate(zip(self.audio_paths, self.transcriptions)):
+        for i, (audio_path, trans) in enumerate(
+            zip(self.audio_paths, self.transcriptions)
+        ):
             if not Path(audio_path).exists():
                 logger.warning(f"Audio file not found: {audio_path}")
                 continue
@@ -239,8 +255,14 @@ class TwiAudioDataset(Dataset):
             try:
                 y, sr = librosa.load(audio_path, sr=self.config.sample_rate)
                 duration = librosa.get_duration(y=y, sr=sr)
-                if not (self.config.min_audio_length <= duration <= self.config.max_audio_length):
-                    logger.warning(f"Audio duration out of range ({duration:.2f}s): {audio_path}")
+                if not (
+                    self.config.min_audio_length
+                    <= duration
+                    <= self.config.max_audio_length
+                ):
+                    logger.warning(
+                        f"Audio duration out of range ({duration:.2f}s): {audio_path}"
+                    )
                     continue
             except Exception as e:
                 logger.warning(f"Error loading audio {audio_path}: {e}")
@@ -262,10 +284,12 @@ class TwiAudioDataset(Dataset):
 
         try:
             audio, sr = librosa.load(audio_path, sr=self.config.sample_rate)
-            audio = self.processor(audio, sampling_rate=self.config.sample_rate).input_features[0]
+            audio = self.processor(
+                audio, sampling_rate=self.config.sample_rate
+            ).input_features[0]
         except Exception as e:
             logger.error(f"Error processing audio {audio_path}: {e}")
-            audio = np.zeros(self.config.sample_rate * 1) # Fallback
+            audio = np.zeros(self.config.sample_rate * 1)  # Fallback
 
         labels = self.processor.tokenizer(transcription).input_ids
         intent_label = self.label_to_id.get(intent, -1)
@@ -281,16 +305,25 @@ class TwiAudioDataset(Dataset):
 
 class MultiTaskDataCollator:
     """Data collator for multi-task training."""
+
     def __init__(self, processor: WhisperProcessor):
         self.processor = processor
 
-    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        input_features = [{"input_features": feature["input_features"]} for feature in features]
-        batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
+    def __call__(
+        self, features: List[Dict[str, Union[List[int], torch.Tensor]]]
+    ) -> Dict[str, torch.Tensor]:
+        input_features = [
+            {"input_features": feature["input_features"]} for feature in features
+        ]
+        batch = self.processor.feature_extractor.pad(
+            input_features, return_tensors="pt"
+        )
 
         label_features = [{"input_ids": feature["labels"]} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        labels = labels_batch["input_ids"].masked_fill(
+            labels_batch.attention_mask.ne(1), -100
+        )
         batch["labels"] = labels
 
         if "intent_labels" in features[0]:
@@ -302,6 +335,7 @@ class MultiTaskDataCollator:
 
 class MultiTaskTrainer(Seq2SeqTrainer):
     """A Seq2SeqTrainer for multi-task learning."""
+
     def __init__(self, *args, intent_loss_weight=0.5, **kwargs):
         super().__init__(*args, **kwargs)
         self.intent_loss_weight = intent_loss_weight
@@ -317,6 +351,7 @@ class MultiTaskTrainer(Seq2SeqTrainer):
 
 class TwiWhisperTrainer:
     """Trainer for the multi-task Whisper model."""
+
     def __init__(self, config: TwiWhisperConfig):
         self.config = config
         self.setup_directories()
@@ -328,9 +363,9 @@ class TwiWhisperTrainer:
         Path(self.config.cache_dir).mkdir(parents=True, exist_ok=True)
 
     def load_and_prepare_data(self):
-        df = pd.read_csv(self.config.prompts_file, on_bad_lines='skip')
+        df = pd.read_csv(self.config.prompts_file, on_bad_lines="skip")
         df = df.dropna(subset=["id", "text", "canonical_intent"])
-        
+
         intents = list(df["canonical_intent"].unique())
         self.config.num_intent_labels = len(intents)
         self.config.label_to_id = {label: i for i, label in enumerate(intents)}
@@ -339,17 +374,21 @@ class TwiWhisperTrainer:
         data = []
         data_dir = Path(self.config.data_dir)
         for _, row in df.iterrows():
-            audio_id = row['id']
+            audio_id = row["id"]
             # Search for the audio file in the subdirectories
-            audio_files = list(data_dir.rglob(f"**/{audio_id}.wav")) + list(data_dir.rglob(f"**/{audio_id}.mp3"))
-            
+            audio_files = list(data_dir.rglob(f"**/{audio_id}.wav")) + list(
+                data_dir.rglob(f"**/{audio_id}.mp3")
+            )
+
             if audio_files:
                 audio_path = audio_files[0]
-                data.append({
-                    "audio_path": str(audio_path),
-                    "transcription": row["text"],
-                    "intent": row["canonical_intent"],
-                })
+                data.append(
+                    {
+                        "audio_path": str(audio_path),
+                        "transcription": row["text"],
+                        "intent": row["canonical_intent"],
+                    }
+                )
             else:
                 logger.warning(f"Audio file not found for id: {audio_id}")
 
@@ -359,7 +398,7 @@ class TwiWhisperTrainer:
         np.random.shuffle(data)
         test_size = int(len(data) * self.config.test_ratio)
         eval_size = int(len(data) * self.config.eval_ratio)
-        train_data = data[test_size + eval_size:]
+        train_data = data[test_size + eval_size :]
         eval_data = data[test_size : test_size + eval_size]
         test_data = data[:test_size]
         return train_data, eval_data, test_data
@@ -369,13 +408,17 @@ class TwiWhisperTrainer:
             [d["audio_path"] for d in train_data],
             [d["transcription"] for d in train_data],
             [d["intent"] for d in train_data],
-            self.processor, self.config, self.config.label_to_id
+            self.processor,
+            self.config,
+            self.config.label_to_id,
         )
         eval_dataset = TwiAudioDataset(
             [d["audio_path"] for d in eval_data],
             [d["transcription"] for d in eval_data],
             [d["intent"] for d in eval_data],
-            self.processor, self.config, self.config.label_to_id
+            self.processor,
+            self.config,
+            self.config.label_to_id,
         )
         return train_dataset, eval_dataset
 
@@ -385,8 +428,12 @@ class TwiWhisperTrainer:
 
         # Transcription metrics
         transcription_labels[transcription_labels == -100] = self.tokenizer.pad_token_id
-        decoded_preds = self.tokenizer.batch_decode(transcription_logits, skip_special_tokens=True)
-        decoded_labels = self.tokenizer.batch_decode(transcription_labels, skip_special_tokens=True)
+        decoded_preds = self.tokenizer.batch_decode(
+            transcription_logits, skip_special_tokens=True
+        )
+        decoded_labels = self.tokenizer.batch_decode(
+            transcription_labels, skip_special_tokens=True
+        )
         wer_score = wer(decoded_labels, decoded_preds)
         cer_score = cer(decoded_labels, decoded_preds)
 
@@ -398,7 +445,7 @@ class TwiWhisperTrainer:
 
     def train(self):
         logger.info("Starting multi-task training...")
-        
+
         # Data
         data = self.load_and_prepare_data()
         train_data, eval_data, test_data = self.split_dataset(data)
@@ -412,7 +459,7 @@ class TwiWhisperTrainer:
             if not hasattr(whisper_config, key):
                 del config_dict[key]
         whisper_config.update(config_dict)
-        
+
         # Explicitly set num_labels for the classification head
         whisper_config.num_labels = self.config.num_intent_labels
 
@@ -443,7 +490,7 @@ class TwiWhisperTrainer:
             fp16=torch.cuda.is_available(),
             predict_with_generate=True,
             logging_dir=f"{self.config.output_dir}/logs",
-            gradient_checkpointing=True, # Enabled gradient checkpointing
+            gradient_checkpointing=True,  # Enabled gradient checkpointing
         )
 
         # Trainer
@@ -471,12 +518,20 @@ class TwiWhisperTrainer:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune Whisper for Twi ASR and Intent")
+    parser = argparse.ArgumentParser(
+        description="Fine-tune Whisper for Twi ASR and Intent"
+    )
     parser.add_argument("--model_size", default="small", help="Whisper model size")
-    parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs")
+    parser.add_argument(
+        "--epochs", type=int, default=15, help="Number of training epochs"
+    )
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
-    parser.add_argument("--report_to", default="tensorboard", help="Logging backend (e.g., tensorboard, wandb)")
+    parser.add_argument(
+        "--report_to",
+        default="tensorboard",
+        help="Logging backend (e.g., tensorboard, wandb)",
+    )
     args = parser.parse_args()
 
     config = TwiWhisperConfig(
