@@ -91,7 +91,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 class TwiWhisperConfig:
     """Configuration for Twi Whisper multi-task fine-tuning."""
     # Model configuration
-    model_name: str = "openai/whisper-small"
+    model_name: str = "openai/whisper-tiny" # Changed to a smaller model to reduce memory usage
     model_size: str = "small"
     language: str = "tw"
     task: str = "transcribe"
