@@ -50,7 +50,9 @@ def check_data_availability():
     if not data_dir.exists():
         issues.append(f"Audio data directory not found: {data_dir}")
     else:
+        logger.info(f"Searching for audio files in {data_dir}...")
         audio_files = list(data_dir.rglob("*.wav")) + list(data_dir.rglob("*.mp3"))
+        logger.info(f"Finished searching for audio files.")
         if not audio_files:
             issues.append(f"No audio files found in {data_dir}")
         else:

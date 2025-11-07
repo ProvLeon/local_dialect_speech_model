@@ -335,14 +335,22 @@ class TwiWhisperTrainer:
         self.config.id_to_label = {i: label for i, label in enumerate(intents)}
 
         data = []
+        data_dir = Path(self.config.data_dir)
         for _, row in df.iterrows():
-            audio_path = f"{self.config.data_dir}/{row['id']}.wav"
-            if os.path.exists(audio_path):
+            audio_id = row['id']
+            # Search for the audio file in the subdirectories
+            audio_files = list(data_dir.rglob(f"**/{audio_id}.wav")) + list(data_dir.rglob(f"**/{audio_id}.mp3"))
+            
+            if audio_files:
+                audio_path = audio_files[0]
                 data.append({
-                    "audio_path": audio_path,
+                    "audio_path": str(audio_path),
                     "transcription": row["text"],
                     "intent": row["canonical_intent"],
                 })
+            else:
+                logger.warning(f"Audio file not found for id: {audio_id}")
+
         return data
 
     def split_dataset(self, data):
