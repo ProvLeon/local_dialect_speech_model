@@ -163,7 +163,7 @@ class WhisperForSpeechClassification(WhisperPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
+            loss_fct = CrossEntropyLoss(ignore_index=-1) # Ignore samples with label -1
             loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
@@ -269,6 +269,8 @@ class TwiAudioDataset(Dataset):
 
         labels = self.processor.tokenizer(transcription).input_ids
         intent_label = self.label_to_id.get(intent, -1)
+        if intent_label == -1:
+            logger.warning(f"Intent '{intent}' not found in label_to_id. Assigning -1.")
 
         return {
             "input_features": audio,
@@ -410,6 +412,9 @@ class TwiWhisperTrainer:
             if not hasattr(whisper_config, key):
                 del config_dict[key]
         whisper_config.update(config_dict)
+        
+        # Explicitly set num_labels for the classification head
+        whisper_config.num_labels = self.config.num_intent_labels
 
         model = WhisperForMultiTask.from_pretrained(
             self.config.model_name,
