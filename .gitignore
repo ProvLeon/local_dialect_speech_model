@@ -27,3 +27,4 @@ data/models/*
 results/*
 logs/*
 venv
+*/models/*
