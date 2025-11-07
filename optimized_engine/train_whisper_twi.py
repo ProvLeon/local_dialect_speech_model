@@ -23,7 +23,7 @@ import re
 import shutil
 import warnings
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -42,6 +42,7 @@ from transformers import (
     Seq2SeqTrainer,
     WhisperPreTrainedModel,
     WhisperModel,
+    WhisperConfig,
 )
 from transformers.modeling_outputs import SequenceClassifierOutput
 
@@ -300,7 +301,7 @@ class TwiWhisperTrainer:
         Path(self.config.cache_dir).mkdir(parents=True, exist_ok=True)
 
     def load_and_prepare_data(self):
-        df = pd.read_csv(self.config.prompts_file)
+        df = pd.read_csv(self.config.prompts_file, on_bad_lines='skip')
         df = df.dropna(subset=["id", "text", "canonical_intent"])
         
         intents = list(df["canonical_intent"].unique())
@@ -370,9 +371,16 @@ class TwiWhisperTrainer:
         data_collator = MultiTaskDataCollator(self.processor)
 
         # Model
+        whisper_config = WhisperConfig.from_pretrained(self.config.model_name)
+        config_dict = asdict(self.config)
+        for key in list(config_dict.keys()):
+            if not hasattr(whisper_config, key):
+                del config_dict[key]
+        whisper_config.update(config_dict)
+
         model = WhisperForMultiTask.from_pretrained(
             self.config.model_name,
-            config=self.config,
+            config=whisper_config,
             ignore_mismatched_sizes=True,
         )
         model.config.forced_decoder_ids = None
