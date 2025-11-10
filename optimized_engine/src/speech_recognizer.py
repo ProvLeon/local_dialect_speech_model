@@ -19,6 +19,7 @@ from typing import Dict, List, Any, Optional
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import hf_hub_download
+import json
 
 import torch
 import numpy as np
