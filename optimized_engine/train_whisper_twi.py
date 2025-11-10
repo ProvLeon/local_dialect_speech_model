@@ -13,11 +13,13 @@ Usage:
 Author: AI Assistant
 Date: 2025-11-07
 """
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import argparse
 import json
 import logging
-import os
+
 import re
 import shutil
 import sys
@@ -520,7 +522,6 @@ class TwiWhisperTrainer:
 
 
 def main():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0" # Force single GPU usage
     parser = argparse.ArgumentParser(
         description="Fine-tune Whisper for Twi ASR and Intent"
     )
