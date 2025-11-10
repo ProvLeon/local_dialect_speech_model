@@ -226,6 +226,10 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
             "classification_logits": classification_output.logits,
         }
 
+    def generate(self, *args, **kwargs):
+        """Generate transcriptions using the transcription model."""
+        return self.transcription_model.generate(*args, **kwargs)
+
 
 class TwiAudioDataset(Dataset):
     """Dataset for Twi audio, transcriptions, and intents, with augmentation."""
