@@ -12,7 +12,7 @@ Date: 2025-11-07
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
@@ -32,7 +32,7 @@ class OptimizedConfig:
     WHISPER = {
         "model_size": "small",  # Using small as the base for multi-task model
         "custom_model_path": str(
-            MODELS_DIR / "whisper_twi_multitask"
+            MODELS_DIR / "whisper_twi"
         ),  # Path to fine-tuned multi-task Whisper model
         "language": "tw",
         "task": "transcribe",
@@ -87,7 +87,7 @@ class OptimizedConfig:
     # ==================== MODEL TRAINING ====================
     TRAINING = {
         "data_augmentation": {
-            "enabled": False, # Keep it simple for now
+            "enabled": False,  # Keep it simple for now
         },
     }
 
@@ -117,7 +117,7 @@ class OptimizedConfig:
     # ==================== DEPLOYMENT CONFIGURATION ====================
     DEPLOYMENT = {
         "environment": os.getenv("ENVIRONMENT", "development"),
-        "version": "3.0.0", # Bump version for multi-task model
+        "version": "3.0.0",  # Bump version for multi-task model
     }
 
     # ==================== HELPER METHODS ====================
@@ -128,6 +128,7 @@ class OptimizedConfig:
     @classmethod
     def get_device(cls) -> str:
         import torch
+
         if cls.PERFORMANCE["use_gpu"] and torch.cuda.is_available():
             return "cuda"
         return "cpu"
@@ -159,6 +160,7 @@ elif os.getenv("ENVIRONMENT") == "development":
 # GPU availability check
 try:
     import torch
+
     if not torch.cuda.is_available():
         config.WHISPER["compute_type"] = "float32"
         config.PERFORMANCE["mixed_precision"] = False

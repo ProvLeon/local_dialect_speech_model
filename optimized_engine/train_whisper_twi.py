@@ -131,8 +131,8 @@ class TwiWhisperConfig:
 
     # Validation
     per_device_eval_batch_size: int = 2
-    eval_steps: int = 200
-    save_steps: int = 400
+    eval_steps: int = 10
+    save_steps: int = 10
     eval_ratio: float = 0.1
     test_ratio: float = 0.1
 
@@ -256,7 +256,6 @@ class TwiAudioDataset(Dataset):
             A.AddGaussianNoise(min_amplitude=0.001, max_amplitude=0.015, p=0.5),
             A.TimeStretch(min_rate=0.8, max_rate=1.25, p=0.5),
             A.PitchShift(min_semitones=-4, max_semitones=4, p=0.5),
-            A.Gain(min_gain_in_db=-12, max_gain_in_db=12, p=0.5),
         ])
 
     def _get_spectrogram_augmentations(self):
@@ -524,6 +523,7 @@ class TwiWhisperTrainer:
             num_train_epochs=self.config.num_epochs,
             evaluation_strategy="steps",
             eval_steps=self.config.eval_steps,
+            save_strategy="steps",
             save_steps=self.config.save_steps,
             logging_steps=self.config.logging_steps,
             report_to=self.config.report_to,
