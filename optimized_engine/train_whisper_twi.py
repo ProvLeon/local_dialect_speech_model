@@ -100,7 +100,7 @@ class TwiWhisperConfig:
     model_name: str = (
         "openai/whisper-tiny"  # Changed to a smaller model to reduce memory usage
     )
-    model_size: str = "tiny"
+    model_size: str = "small"
     language: str = "tw"
     task: str = "transcribe"
 
@@ -544,7 +544,7 @@ def main():
         help="Logging backend (e.g., tensorboard, wandb)",
     )
     args = parser.parse_args()
-    # args.model_size = "tiny" # Force tiny model to conserve memory
+    args.model_size = "tiny"  # Force tiny model to conserve memory
 
     config = TwiWhisperConfig(
         model_size=args.model_size,
