@@ -116,7 +116,7 @@ class TwiWhisperConfig:
     learning_rate: float = 1e-5
     warmup_steps: int = 100
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 8 # Further increased gradient accumulation steps
+    gradient_accumulation_steps: int = 16 # Further increased gradient accumulation steps
     intent_loss_weight: float = 0.5
 
     # Audio processing
@@ -125,6 +125,7 @@ class TwiWhisperConfig:
     min_audio_length: float = 0.5
 
     # Validation
+    per_device_eval_batch_size: int = 2
     eval_steps: int = 200
     save_steps: int = 400
     eval_ratio: float = 0.1
@@ -475,6 +476,7 @@ class TwiWhisperTrainer:
         training_args = Seq2SeqTrainingArguments(
             output_dir=self.config.output_dir,
             per_device_train_batch_size=self.config.batch_size,
+            per_device_eval_batch_size=self.config.batch_size,
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
             learning_rate=self.config.learning_rate,
             warmup_steps=self.config.warmup_steps,
@@ -525,7 +527,7 @@ def main():
     parser.add_argument(
         "--epochs", type=int, default=15, help="Number of training epochs"
     )
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
     parser.add_argument(
         "--report_to",
