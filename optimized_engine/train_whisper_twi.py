@@ -18,7 +18,6 @@ import argparse
 import json
 import logging
 import os
-
 import re
 import shutil
 import sys
@@ -101,7 +100,7 @@ class TwiWhisperConfig:
     model_name: str = (
         "openai/whisper-tiny"  # Changed to a smaller model to reduce memory usage
     )
-    model_size: str = "small"
+    model_size: str = "tiny"
     language: str = "tw"
     task: str = "transcribe"
 
@@ -113,11 +112,13 @@ class TwiWhisperConfig:
 
     # Training configuration
     num_epochs: int = 15
-    batch_size: int = 2 # Further reduced batch size
+    batch_size: int = 2  # Further reduced batch size
     learning_rate: float = 1e-5
     warmup_steps: int = 100
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 16 # Further increased gradient accumulation steps
+    gradient_accumulation_steps: int = (
+        16  # Further increased gradient accumulation steps
+    )
     intent_loss_weight: float = 0.5
 
     # Audio processing
@@ -543,6 +544,7 @@ def main():
         help="Logging backend (e.g., tensorboard, wandb)",
     )
     args = parser.parse_args()
+    # args.model_size = "tiny" # Force tiny model to conserve memory
 
     config = TwiWhisperConfig(
         model_size=args.model_size,
