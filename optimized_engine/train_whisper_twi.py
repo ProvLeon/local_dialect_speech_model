@@ -15,6 +15,7 @@ Date: 2025-11-07
 """
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -341,12 +342,33 @@ class MultiTaskTrainer(Seq2SeqTrainer):
         super().__init__(*args, **kwargs)
         self.intent_loss_weight = intent_loss_weight
 
+    def training_step(self, model, inputs):
+        """Perform a single training step and clean up memory."""
+        loss = super().training_step(model, inputs)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        return loss
+
     def compute_loss(self, model, inputs, return_outputs=False):
         outputs = model(**inputs)
         transcription_loss = outputs.get("transcription_loss")
         classification_loss = outputs.get("classification_loss")
 
-        total_loss = transcription_loss + self.intent_loss_weight * classification_loss
+        if transcription_loss is None or classification_loss is None:
+            # This can happen if a batch contains only samples for one task
+            # and the other task's labels are all -100.
+            if transcription_loss is not None:
+                total_loss = transcription_loss
+            elif classification_loss is not None:
+                total_loss = self.intent_loss_weight * classification_loss
+            else:
+                # This case should ideally not be reached if the batch is valid.
+                # Return a zero tensor if no loss is computed.
+                total_loss = torch.tensor(0.0, device=model.device, requires_grad=True)
+        else:
+            total_loss = transcription_loss + self.intent_loss_weight * classification_loss
+        
         return (total_loss, outputs) if return_outputs else total_loss
 
 
@@ -493,6 +515,7 @@ class TwiWhisperTrainer:
             predict_with_generate=True,
             logging_dir=f"{self.config.output_dir}/logs",
             gradient_checkpointing=True,  # Enabled gradient checkpointing
+            optim="adamw_bnb_8bit",
         )
 
         # Trainer
