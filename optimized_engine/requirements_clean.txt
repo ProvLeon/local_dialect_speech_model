@@ -48,3 +48,4 @@ fsspec>=2023.1.0,<=2023.10.0
 tqdm>=4.64.0
 pyyaml>=6.0
 sounddevice>=0.4.0
+audiomentations>=0.30.0

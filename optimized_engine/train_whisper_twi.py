@@ -18,9 +18,11 @@ import argparse
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import sys
+import torchaudio
 import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -53,6 +55,7 @@ if not hasattr(np, "dtypes"):
             return MockStringDType()
 
     np.dtypes = MockDtypes()
+import audiomentations as A
 import librosa
 import pandas as pd
 import torch
@@ -225,7 +228,7 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
 
 
 class TwiAudioDataset(Dataset):
-    """Dataset for Twi audio, transcriptions, and intents."""
+    """Dataset for Twi audio, transcriptions, and intents, with augmentation."""
 
     def __init__(
         self,
@@ -235,6 +238,7 @@ class TwiAudioDataset(Dataset):
         processor: WhisperProcessor,
         config: TwiWhisperConfig,
         label_to_id: Dict[str, int],
+        is_train: bool = False,
     ):
         self.audio_paths = audio_paths
         self.transcriptions = transcriptions
@@ -242,7 +246,24 @@ class TwiAudioDataset(Dataset):
         self.processor = processor
         self.config = config
         self.label_to_id = label_to_id
+        self.is_train = is_train
+        self.waveform_augmentations = self._get_waveform_augmentations() if is_train else None
+        self.spectrogram_augmentations = self._get_spectrogram_augmentations() if is_train else None
         self._filter_valid_samples()
+
+    def _get_waveform_augmentations(self):
+        return A.Compose([
+            A.AddGaussianNoise(min_amplitude=0.001, max_amplitude=0.015, p=0.5),
+            A.TimeStretch(min_rate=0.8, max_rate=1.25, p=0.5),
+            A.PitchShift(min_semitones=-4, max_semitones=4, p=0.5),
+            A.Gain(min_gain_in_db=-12, max_gain_in_db=12, p=0.5),
+        ])
+
+    def _get_spectrogram_augmentations(self):
+        return nn.Sequential(
+            torchaudio.transforms.TimeMasking(time_mask_param=80),
+            torchaudio.transforms.FrequencyMasking(freq_mask_param=80),
+        )
 
     def _filter_valid_samples(self):
         valid_indices = []
@@ -287,12 +308,22 @@ class TwiAudioDataset(Dataset):
 
         try:
             audio, sr = librosa.load(audio_path, sr=self.config.sample_rate)
-            audio = self.processor(
+
+            if self.is_train and self.waveform_augmentations:
+                audio = self.waveform_augmentations(samples=audio, sample_rate=sr)
+
+            input_features = self.processor(
                 audio, sampling_rate=self.config.sample_rate
             ).input_features[0]
+            
+            input_features = torch.from_numpy(input_features)
+
+            if self.is_train and self.spectrogram_augmentations:
+                input_features = self.spectrogram_augmentations(input_features)
+
         except Exception as e:
             logger.error(f"Error processing audio {audio_path}: {e}")
-            audio = np.zeros(self.config.sample_rate * 1)  # Fallback
+            input_features = torch.zeros((80, 3000)) # Fallback spectrogram
 
         labels = self.processor.tokenizer(transcription).input_ids
         intent_label = self.label_to_id.get(intent, -1)
@@ -300,7 +331,7 @@ class TwiAudioDataset(Dataset):
             logger.warning(f"Intent '{intent}' not found in label_to_id. Assigning -1.")
 
         return {
-            "input_features": audio,
+            "input_features": input_features,
             "labels": labels,
             "intent_labels": intent_label,
         }
@@ -414,6 +445,7 @@ class TwiWhisperTrainer:
             self.processor,
             self.config,
             self.config.label_to_id,
+            is_train=True,
         )
         eval_dataset = TwiAudioDataset(
             [d["audio_path"] for d in eval_data],
@@ -422,6 +454,7 @@ class TwiWhisperTrainer:
             self.processor,
             self.config,
             self.config.label_to_id,
+            is_train=False,
         )
         return train_dataset, eval_dataset
 

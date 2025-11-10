@@ -40,6 +40,7 @@ pydub>=0.25.0
 mutagen>=1.46.0
 audioread>=3.0.0
 sounddevice>=0.4.0
+audiomentations>=0.30.0
 
 # Configuration and Logging
 pyyaml>=6.0

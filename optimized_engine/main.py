@@ -143,7 +143,7 @@ class OptimizedEngineManager:
             logger.error(f"❌ Tests failed: {e}")
             return False
 
-    def run_demo(self):
+    def run_demo(self, huggingface_repo_id=None):
         """Run interactive demo."""
         logger.info("🎮 Starting interactive demo...")
 
@@ -156,7 +156,7 @@ class OptimizedEngineManager:
             print("=" * 60)
 
             # Create recognizer
-            recognizer = create_speech_recognizer()
+            recognizer = create_speech_recognizer(huggingface_repo_id=huggingface_repo_id)
 
             # Health check
             health = recognizer.health_check()
@@ -240,7 +240,7 @@ class OptimizedEngineManager:
             logger.error(f"❌ Demo failed: {e}")
             return False
 
-    def show_status(self):
+    def show_status(self, huggingface_repo_id=None):
         """Show system status."""
         print("\n" + "=" * 60)
         print("    OPTIMIZED TWI SPEECH ENGINE STATUS")
@@ -250,7 +250,7 @@ class OptimizedEngineManager:
             sys.path.insert(0, str(self.base_dir / "src"))
             from speech_recognizer import create_speech_recognizer
 
-            recognizer = create_speech_recognizer()
+            recognizer = create_speech_recognizer(huggingface_repo_id=huggingface_repo_id)
 
             # Health check
             health = recognizer.health_check()
@@ -370,9 +370,21 @@ Examples:
 
     # Demo command
     demo_parser = subparsers.add_parser("demo", help="Run interactive demo")
+    demo_parser.add_argument(
+        "--huggingface",
+        type=str,
+        default=None,
+        help="Hugging Face model repository ID (e.g., 'TwiWhisperModel/TwiWhisper_multiTask_tiny')",
+    )
 
     # Status command
     status_parser = subparsers.add_parser("status", help="Show system status")
+    status_parser.add_argument(
+        "--huggingface",
+        type=str,
+        default=None,
+        help="Hugging Face model repository ID (e.g., 'TwiWhisperModel/TwiWhisper_multiTask_tiny')",
+    )
 
     # Info command
     info_parser = subparsers.add_parser("info", help="Show system information")
@@ -410,10 +422,10 @@ def main():
         success = asyncio.run(manager.run_tests(verbose=args.verbose))
 
     elif args.command == "demo":
-        success = manager.run_demo()
+        success = manager.run_demo(huggingface_repo_id=args.huggingface)
 
     elif args.command == "status":
-        success = manager.show_status()
+        success = manager.show_status(huggingface_repo_id=args.huggingface)
 
     elif args.command == "info":
         success = manager.show_info()

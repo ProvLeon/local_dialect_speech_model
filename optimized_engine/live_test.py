@@ -4,6 +4,7 @@ import sounddevice as sd
 import numpy as np
 from scipy.io.wavfile import write
 from pathlib import Path
+import argparse
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -21,13 +22,22 @@ def record_audio(duration=5, sample_rate=16000):
 
 def main():
     """Main function for live audio testing."""
+    parser = argparse.ArgumentParser(description="Live Twi Speech Recognition Test")
+    parser.add_argument(
+        "--huggingface",
+        type=str,
+        default=None,
+        help="Hugging Face model repository ID (e.g., 'TwiWhisperModel/TwiWhisper_multiTask_tiny')",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("    LIVE TWI SPEECH RECOGNITION TEST")
     print("=" * 60)
     print("This script will record audio from your microphone and process it.")
     
     try:
-        recognizer = create_speech_recognizer()
+        recognizer = create_speech_recognizer(huggingface_repo_id=args.huggingface)
         sample_rate = recognizer.config.AUDIO["sample_rate"]
     except Exception as e:
         print(f"❌ Failed to initialize speech recognizer: {e}")

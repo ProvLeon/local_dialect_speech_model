@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from huggingface_hub import hf_hub_download
 
 import torch
 import numpy as np
@@ -76,34 +77,66 @@ class AudioProcessor:
 class MultiTaskWhisperRecognizer:
     """Handles speech-to-text and intent classification using the multi-task model."""
 
-    def __init__(self, config: OptimizedConfig):
+    def __init__(self, config: OptimizedConfig, huggingface_repo_id: Optional[str] = None):
         self.config = config
         self.model = None
         self.processor = None
         self.device = config.get_device()
         self.id_to_label = {}
+        self.huggingface_repo_id = huggingface_repo_id
         self._load_model()
 
     def _load_model(self):
         """Load the fine-tuned multi-task Whisper model."""
-        custom_model_path = self.config.WHISPER.get("custom_model_path")
-        if not custom_model_path or not Path(custom_model_path).exists():
-            raise ValueError(f"Custom multi-task model not found at {custom_model_path}")
+        if self.huggingface_repo_id:
+            logger.info(f"Loading multi-task Whisper model from Hugging Face Hub: {self.huggingface_repo_id}")
+            self.model = WhisperForMultiTask.from_pretrained(self.huggingface_repo_id)
+            self.processor = WhisperProcessor.from_pretrained(self.huggingface_repo_id)
 
-        logger.info(f"Loading multi-task Whisper model from: {custom_model_path}")
-        self.model = WhisperForMultiTask.from_pretrained(custom_model_path)
-        self.processor = WhisperProcessor.from_pretrained(custom_model_path)
-        self.model.to(self.device)
+            # Download intent_labels.json from Hugging Face Hub
+            try:
+                label_file = hf_hub_download(repo_id=self.huggingface_repo_id, filename="intent_labels.json")
+                with open(label_file, "r") as f:
+                    label_to_id = json.load(f)
+                    self.id_to_label = {int(i): label for label, i in label_to_id.items()} # Keys might be strings
+            except Exception as e:
+                logger.warning(f"Could not download intent_labels.json from Hugging Face Hub: {e}. Intent classification might be limited.")
+                # Fallback: try to get labels from model config if available
+                if hasattr(self.model.config, "id2label") and self.model.config.id2label:
+                    self.id_to_label = {int(k): v for k, v in self.model.config.id2label.items()}
+                else:
+                    logger.warning("No intent labels found in model config either.")
 
-        # Load intent labels
-        label_path = Path(custom_model_path) / "intent_labels.json"
-        if label_path.exists():
-            with open(label_path, "r") as f:
-                label_to_id = json.load(f)
-                self.id_to_label = {i: label for label, i in label_to_id.items()}
         else:
-            logger.warning("intent_labels.json not found. Intent classification will be limited.")
+            custom_model_path = self.config.WHISPER.get("custom_model_path")
+            if not custom_model_path or not Path(custom_model_path).exists():
+                # Default to a local whisper_twi model if custom_model_path is not set or doesn't exist
+                local_default_model_path = Path(__file__).parent.parent / "models" / "whisper_twi"
+                if local_default_model_path.exists():
+                    custom_model_path = str(local_default_model_path)
+                    logger.info(f"Custom model path not found, defaulting to local: {custom_model_path}")
+                else:
+                    raise ValueError(f"Custom multi-task model not found at {custom_model_path} and no local default 'whisper_twi' model found at {local_default_model_path}")
 
+            logger.info(f"Loading multi-task Whisper model from local path: {custom_model_path}")
+            self.model = WhisperForMultiTask.from_pretrained(custom_model_path)
+            self.processor = WhisperProcessor.from_pretrained(custom_model_path)
+
+            # Load intent labels from local path
+            label_path = Path(custom_model_path) / "intent_labels.json"
+            if label_path.exists():
+                with open(label_path, "r") as f:
+                    label_to_id = json.load(f)
+                    self.id_to_label = {int(i): label for label, i in label_to_id.items()}
+            else:
+                logger.warning("intent_labels.json not found locally. Intent classification will be limited.")
+                # Fallback: try to get labels from model config if available
+                if hasattr(self.model.config, "id2label") and self.model.config.id2label:
+                    self.id_to_label = {int(k): v for k, v in self.model.config.id2label.items()}
+                else:
+                    logger.warning("No intent labels found in model config either.")
+
+        self.model.to(self.device)
         logger.info(f"Multi-task Whisper model loaded successfully on {self.device}")
 
     def recognize(self, audio_path: str) -> Dict[str, Any]:
@@ -154,10 +187,10 @@ class MultiTaskWhisperRecognizer:
 class OptimizedSpeechRecognizer:
     """Main speech recognition engine."""
 
-    def __init__(self, config: OptimizedConfig = None):
+    def __init__(self, config: OptimizedConfig = None, huggingface_repo_id: Optional[str] = None):
         self.config = config or OptimizedConfig()
         self.audio_processor = AudioProcessor(self.config)
-        self.recognizer = MultiTaskWhisperRecognizer(self.config)
+        self.recognizer = MultiTaskWhisperRecognizer(self.config, huggingface_repo_id=huggingface_repo_id)
         self.stats = {
             "total_requests": 0,
             "successful_requests": 0,
@@ -221,6 +254,7 @@ class OptimizedSpeechRecognizer:
 
 def create_speech_recognizer(
     config_overrides: Dict[str, Any] = None,
+    huggingface_repo_id: Optional[str] = None,
 ) -> OptimizedSpeechRecognizer:
     """Factory function to create speech recognizer."""
     config = OptimizedConfig()
@@ -228,4 +262,5 @@ def create_speech_recognizer(
         for key, value in config_overrides.items():
             if hasattr(config, key):
                 setattr(config, key, value)
-    return OptimizedSpeechRecognizer(config)
+    
+    return OptimizedSpeechRecognizer(config, huggingface_repo_id=huggingface_repo_id)
