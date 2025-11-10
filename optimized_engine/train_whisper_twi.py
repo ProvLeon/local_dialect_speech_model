@@ -228,6 +228,8 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
 
     def generate(self, *args, **kwargs):
         """Generate transcriptions using the transcription model."""
+        # Remove intent_labels from kwargs if present, as it's not used by the generate method
+        kwargs.pop("intent_labels", None)
         return self.transcription_model.generate(*args, **kwargs)
 
 
