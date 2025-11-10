@@ -13,12 +13,11 @@ Usage:
 Author: AI Assistant
 Date: 2025-11-07
 """
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import argparse
 import json
 import logging
+import os
 
 import re
 import shutil
@@ -449,6 +448,12 @@ class TwiWhisperTrainer:
     def train(self):
         logger.info("Starting multi-task training...")
 
+        use_cuda = torch.cuda.is_available()
+        if use_cuda:
+            logger.info("CUDA is available. Using GPU for training.")
+        else:
+            logger.info("CUDA not available. Using CPU for training.")
+
         # Data
         data = self.load_and_prepare_data()
         train_data, eval_data, test_data = self.split_dataset(data)
@@ -491,7 +496,8 @@ class TwiWhisperTrainer:
             load_best_model_at_end=True,
             metric_for_best_model="wer",
             greater_is_better=False,
-            fp16=torch.cuda.is_available(),
+            fp16=use_cuda,
+            no_cuda=not use_cuda,
             predict_with_generate=True,
             logging_dir=f"{self.config.output_dir}/logs",
             gradient_checkpointing=True,  # Enabled gradient checkpointing
