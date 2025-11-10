@@ -17,11 +17,11 @@ soundfile>=0.10.0,<0.13.0
 openai-whisper>=20231117
 
 # HuggingFace ecosystem (compatible versions)
-transformers>=4.30.0,<4.35.0
+transformers>=4.36.0,<4.37.0
 tokenizers>=0.13.0,<0.15.0
-huggingface-hub>=0.15.0,<0.18.0
+huggingface-hub>=0.20.0,<0.21.0
+accelerate>=0.25.0,<0.26.0
 datasets>=2.12.0,<2.15.0
-accelerate>=0.20.0,<0.25.0
 peft==0.6.0
 
 # Machine learning utilities
