@@ -504,7 +504,7 @@ class TwiWhisperManager:
         data = self.load_and_prepare_data()
         train_data, eval_data, test_data = self.split_dataset(data)
         train_dataset, eval_dataset = self.create_datasets(train_data, eval_data)
-        data_collator = MultiTaskDataCollator(self.processor)
+        data_collator = TwiWhisperDataCollator(self.processor)
 
         # Model
         whisper_config = WhisperConfig.from_pretrained(self.config.model_name)
