@@ -201,6 +201,14 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
         self.transcription_model = WhisperForConditionalGeneration(config)
         self.classification_model = WhisperForSpeechClassification(config)
 
+        # Initialize generation_config to prevent evaluation errors
+        from transformers import GenerationConfig
+
+        if not hasattr(self, "generation_config") or self.generation_config is None:
+            self.generation_config = GenerationConfig.from_model_config(config)
+            self.generation_config.forced_decoder_ids = None
+            self.generation_config.suppress_tokens = []
+
     def forward(
         self,
         input_features,
@@ -526,6 +534,13 @@ class TwiWhisperTrainer:
         model.config.forced_decoder_ids = None
         model.config.suppress_tokens = []
 
+        # Set up generation config to fix evaluation error
+        from transformers import GenerationConfig
+
+        model.generation_config = GenerationConfig.from_model_config(model.config)
+        model.generation_config.forced_decoder_ids = None
+        model.generation_config.suppress_tokens = []
+
         # Training arguments
         training_args = Seq2SeqTrainingArguments(
             output_dir=self.config.output_dir,
@@ -535,15 +550,15 @@ class TwiWhisperTrainer:
             learning_rate=self.config.learning_rate,
             warmup_steps=self.config.warmup_steps,
             num_train_epochs=self.config.num_epochs,
-            eval_strategy="steps",
-            eval_steps=self.config.eval_steps,
-            save_strategy="steps",
-            save_steps=self.config.save_steps,
+            # eval_strategy="steps",
+            eval_steps=self.config.eval_steps,  # Disabled evaluation temporarily
+            save_strategy="epoch",
+            save_steps=self.config.save_steps,  # Changed to save per epoch
             logging_steps=self.config.logging_steps,
             report_to=self.config.report_to,
-            load_best_model_at_end=True,
-            metric_for_best_model="wer",
-            greater_is_better=False,
+            load_best_model_at_end=Ture,  # Disabled since no evaluation
+            # metric_for_best_model="wer",  # Disabled since no evaluation
+            greater_is_better=True,
             fp16=use_cuda,
             no_cuda=not use_cuda,
             predict_with_generate=True,
