@@ -609,10 +609,9 @@ class TwiWhisperManager:
             generation_max_length=448,
             generation_num_beams=1,
             remove_unused_columns=False,
-            label_names=["labels"],
+            label_names=["label_ids"],
             logging_dir=f"{self.config.output_dir}/logs",
             gradient_checkpointing=False,
-            include_for_metrics=True,
         )
 
         # Create data collator
