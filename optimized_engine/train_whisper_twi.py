@@ -109,7 +109,7 @@ class TwiWhisperConfig:
 
     # Data paths
     data_dir: str = "../data/raw"
-    manifest_file: str = "../data/test_dataset/test_manifest.jsonl"
+    manifest_file: str = "../data/lean_dataset/audio_manifest_multisample.jsonl"
     output_dir: str = "./models/whisper_twi_multitask"
     cache_dir: str = "./data/cache"
 
