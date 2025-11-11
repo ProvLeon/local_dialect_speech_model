@@ -536,7 +536,7 @@ class TwiWhisperManager:
             self.processor.tokenizer.pad_token_id
         )
         decoded_preds = self.processor.tokenizer.batch_decode(
-            transcription_logits, skip_special_tokens=True
+            transcription_labels, skip_special_tokens=True
         )
         decoded_labels = self.processor.tokenizer.batch_decode(
             transcription_labels, skip_special_tokens=True
