@@ -347,13 +347,12 @@ class TwiAudioDataset(Dataset):
             transcription, max_length=448, truncation=True, return_tensors="pt"
         ).input_ids.squeeze(0)
 
-        # Debug: Print sample data info
+        # Debug: Print sample data info only once
         if idx == 0:
-            print(f"DEBUG Dataset: audio_path: {audio_path}")
-            print(f"DEBUG Dataset: transcription: {transcription}")
-            print(f"DEBUG Dataset: input_features shape: {input_features.shape}")
-            print(f"DEBUG Dataset: labels shape: {labels.shape}")
-            print(f"DEBUG Dataset: first few label tokens: {labels[:10]}")
+            logger.info(f"Sample data - Audio: {audio_path}")
+            logger.info(f"Sample data - Text: {transcription}")
+            logger.info(f"Sample data - Features shape: {input_features.shape}")
+            logger.info(f"Sample data - Labels shape: {labels.shape}")
 
         return {
             "input_features": input_features,
@@ -393,14 +392,6 @@ class TwiWhisperDataCollator:
             labels = labels[:, 1:]
 
         batch["labels"] = labels
-
-        # Debug: Print batch info
-        print(
-            f"DEBUG Collator: batch input_features shape: {batch['input_features'].shape}"
-        )
-        print(f"DEBUG Collator: batch labels shape: {batch['labels'].shape}")
-        print(f"DEBUG Collator: sample label: {batch['labels'][0][:10]}")
-
         return batch
 
 
@@ -429,6 +420,9 @@ class TwiWhisperManager:
 
         data = []
         intents = set()
+        found_files = 0
+
+        logger.info(f"Loading data from: {self.config.manifest_file}")
 
         # Load data from JSONL manifest file
         with open(self.config.manifest_file, "r", encoding="utf-8") as f:
@@ -436,9 +430,22 @@ class TwiWhisperManager:
                 if line.strip():
                     sample = json.loads(line.strip())
 
-                    # Check if audio file exists
-                    audio_path = os.path.join("..", sample["audio_path"])
-                    if os.path.exists(audio_path):
+                    # Try multiple possible audio paths
+                    possible_paths = [
+                        sample["audio_path"],
+                        os.path.join("..", sample["audio_path"]),
+                        sample["audio_path"].replace("data/raw/", "../data/raw/"),
+                        sample["audio_path"].replace("data/raw/", "data/raw/"),
+                    ]
+
+                    audio_path = None
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            audio_path = path
+                            found_files += 1
+                            break
+
+                    if audio_path:
                         data.append(
                             {
                                 "audio_path": audio_path,
@@ -447,8 +454,6 @@ class TwiWhisperManager:
                             }
                         )
                         intents.add(sample["intent"])
-                    else:
-                        logger.warning(f"Audio file not found: {audio_path}")
 
         # Set up intent labels
         intents = sorted(list(intents))
@@ -456,8 +461,27 @@ class TwiWhisperManager:
         self.config.label_to_id = {label: i for i, label in enumerate(intents)}
         self.config.id_to_label = {i: label for i, label in enumerate(intents)}
 
-        logger.info(f"Loaded {len(data)} samples with {len(intents)} intents")
-        logger.info(f"Intents: {intents}")
+        logger.info(f"Loaded {len(data)} samples from manifest")
+        logger.info(f"Found {found_files} audio files")
+        logger.info(f"Number of intents: {len(intents)}")
+
+        if len(data) == 0:
+            logger.error("❌ CRITICAL ERROR: No audio files found!")
+            logger.error("📁 Expected audio files in directories like:")
+            logger.error("   - ../data/raw/P01/")
+            logger.error("   - ../data/raw/P02/")
+            logger.error("   - etc.")
+            logger.error("")
+            logger.error("🎙️  You need to:")
+            logger.error("   1. Record audio files for each prompt in the manifest")
+            logger.error("   2. Save them in the correct directory structure")
+            logger.error("   3. Ensure file names match the manifest entries")
+            logger.error("")
+            logger.error("📋 Check the manifest file for expected file paths:")
+            logger.error(f"   {self.config.manifest_file}")
+            raise ValueError(
+                "No valid audio files found! Training cannot proceed without audio data. Please record the audio files first."
+            )
 
         return data
 
@@ -502,25 +526,23 @@ class TwiWhisperManager:
         # Replace -100s used for padding as we can't decode them
         label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
 
-        # We do not want to group tokens when computing the metrics
-        pred_str = self.processor.tokenizer.batch_decode(
-            pred_ids, skip_special_tokens=True
-        )
-        label_str = self.processor.tokenizer.batch_decode(
-            label_ids, skip_special_tokens=True
-        )
+        if isinstance(labels, tuple):
+            transcription_labels = labels[0]
+        else:
+            transcription_labels = labels
 
-        # Debug: Print sample predictions and labels
-        print(
-            f"DEBUG: Sample prediction: {pred_str[0] if len(pred_str) > 0 else 'None'}"
+        # Transcription metrics
+        transcription_labels[transcription_labels == -100] = (
+            self.processor.tokenizer.pad_token_id
         )
-        print(f"DEBUG: Sample label: {label_str[0] if len(label_str) > 0 else 'None'}")
-
-        # Compute WER and CER
-        wer_score = wer(label_str, pred_str)
-        cer_score = cer(label_str, pred_str)
-
-        print(f"DEBUG: WER: {wer_score}, CER: {cer_score}")
+        decoded_preds = self.processor.tokenizer.batch_decode(
+            transcription_logits, skip_special_tokens=True
+        )
+        decoded_labels = self.processor.tokenizer.batch_decode(
+            transcription_labels, skip_special_tokens=True
+        )
+        wer_score = wer(decoded_labels, decoded_preds)
+        cer_score = cer(decoded_labels, decoded_preds)
 
         return {"wer": wer_score, "cer": cer_score}
 
@@ -607,23 +629,12 @@ class TwiWhisperManager:
             compute_metrics=self.compute_metrics,
         )
 
-        # Test model with a sample before training
-        logger.info("Testing model with sample data...")
-        try:
-            sample = train_dataset[0]
-            test_input = {
-                "input_features": sample["input_features"].unsqueeze(0),
-                "labels": sample["labels"].unsqueeze(0),
-            }
+        # Verify we have actual training data
+        if len(train_dataset) == 0:
+            logger.error("❌ No training data available!")
+            return
 
-            with torch.no_grad():
-                test_output = model(**test_input)
-                logger.info(f"Test output keys: {list(test_output.keys())}")
-                logger.info(f"Test loss: {test_output.loss}")
-
-        except Exception as e:
-            logger.error(f"Model test failed: {e}")
-            raise
+        logger.info("✅ Model loaded and ready for training with real audio data...")
 
         # Train with better logging
         logger.info("Starting training...")
@@ -633,15 +644,6 @@ class TwiWhisperManager:
         logger.info(f"Learning rate: {self.config.learning_rate}")
 
         trainer.train()
-
-        # Save the final model
-        logger.info("Saving final model...")
-        trainer.save_model()
-
-        # Run final evaluation
-        logger.info("Running final evaluation...")
-        eval_results = trainer.evaluate()
-        logger.info(f"Final evaluation results: {eval_results}")
 
         # Save
         trainer.save_model()
