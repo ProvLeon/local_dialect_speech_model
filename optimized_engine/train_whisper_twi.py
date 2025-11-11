@@ -109,17 +109,17 @@ class TwiWhisperConfig:
 
     # Data paths
     data_dir: str = "../data/raw"
-    prompts_file: str = "../prompts_lean.csv"
+    manifest_file: str = "../data/test_dataset/test_manifest.jsonl"
     output_dir: str = "./models/whisper_twi_multitask"
     cache_dir: str = "./data/cache"
 
     # Training configuration
-    num_epochs: int = 15
-    batch_size: int = 8  # Proper batch size for learning
-    learning_rate: float = 1e-5
-    warmup_steps: int = 500
+    num_epochs: int = 10
+    batch_size: int = 4  # Reduced for stability
+    learning_rate: float = 5e-5  # Increased for better learning
+    warmup_steps: int = 100
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 4  # Proper gradient accumulation
+    gradient_accumulation_steps: int = 8  # Increased for effective batch size
     intent_loss_weight: float = 0.5
 
     # Audio processing
@@ -128,9 +128,9 @@ class TwiWhisperConfig:
     min_audio_length: float = 0.5
 
     # Validation
-    per_device_eval_batch_size: int = 8
-    eval_steps: int = 50
-    save_steps: int = 50
+    per_device_eval_batch_size: int = 4
+    eval_steps: int = 20
+    save_steps: int = 20
     eval_ratio: float = 0.1
     test_ratio: float = 0.1
 
@@ -342,10 +342,18 @@ class TwiAudioDataset(Dataset):
             # Create fallback features with correct dimensions
             input_features = torch.zeros((80, 3000))
 
-        # Tokenize transcription
+        # Tokenize transcription properly for Whisper
         labels = self.processor.tokenizer(
-            transcription, add_special_tokens=False, return_tensors="pt"
-        ).input_ids.flatten()
+            transcription, max_length=448, truncation=True, return_tensors="pt"
+        ).input_ids.squeeze(0)
+
+        # Debug: Print sample data info
+        if idx == 0:
+            print(f"DEBUG Dataset: audio_path: {audio_path}")
+            print(f"DEBUG Dataset: transcription: {transcription}")
+            print(f"DEBUG Dataset: input_features shape: {input_features.shape}")
+            print(f"DEBUG Dataset: labels shape: {labels.shape}")
+            print(f"DEBUG Dataset: first few label tokens: {labels[:10]}")
 
         return {
             "input_features": input_features,
@@ -385,6 +393,14 @@ class TwiWhisperDataCollator:
             labels = labels[:, 1:]
 
         batch["labels"] = labels
+
+        # Debug: Print batch info
+        print(
+            f"DEBUG Collator: batch input_features shape: {batch['input_features'].shape}"
+        )
+        print(f"DEBUG Collator: batch labels shape: {batch['labels'].shape}")
+        print(f"DEBUG Collator: sample label: {batch['labels'][0][:10]}")
+
         return batch
 
 
@@ -409,34 +425,39 @@ class TwiWhisperManager:
         Path(self.config.cache_dir).mkdir(parents=True, exist_ok=True)
 
     def load_and_prepare_data(self):
-        df = pd.read_csv(self.config.prompts_file, on_bad_lines="skip")
-        df = df.dropna(subset=["id", "text", "canonical_intent"])
+        import json
 
-        intents = list(df["canonical_intent"].unique())
+        data = []
+        intents = set()
+
+        # Load data from JSONL manifest file
+        with open(self.config.manifest_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    sample = json.loads(line.strip())
+
+                    # Check if audio file exists
+                    audio_path = os.path.join("..", sample["audio_path"])
+                    if os.path.exists(audio_path):
+                        data.append(
+                            {
+                                "audio_path": audio_path,
+                                "transcription": sample["text"],
+                                "intent": sample["intent"],
+                            }
+                        )
+                        intents.add(sample["intent"])
+                    else:
+                        logger.warning(f"Audio file not found: {audio_path}")
+
+        # Set up intent labels
+        intents = sorted(list(intents))
         self.config.num_intent_labels = len(intents)
         self.config.label_to_id = {label: i for i, label in enumerate(intents)}
         self.config.id_to_label = {i: label for i, label in enumerate(intents)}
 
-        data = []
-        data_dir = Path(self.config.data_dir)
-        for _, row in df.iterrows():
-            audio_id = row["id"]
-            # Search for the audio file in the subdirectories
-            audio_files = list(data_dir.rglob(f"**/{audio_id}.wav")) + list(
-                data_dir.rglob(f"**/{audio_id}.mp3")
-            )
-
-            if audio_files:
-                audio_path = audio_files[0]
-                data.append(
-                    {
-                        "audio_path": str(audio_path),
-                        "transcription": row["text"],
-                        "intent": row["canonical_intent"],
-                    }
-                )
-            else:
-                logger.warning(f"Audio file not found for id: {audio_id}")
+        logger.info(f"Loaded {len(data)} samples with {len(intents)} intents")
+        logger.info(f"Intents: {intents}")
 
         return data
 
@@ -474,6 +495,10 @@ class TwiWhisperManager:
         pred_ids = eval_pred.predictions
         label_ids = eval_pred.label_ids
 
+        # Debug: Print shapes and sample values
+        print(f"DEBUG: pred_ids shape: {pred_ids.shape}")
+        print(f"DEBUG: label_ids shape: {label_ids.shape}")
+
         # Replace -100s used for padding as we can't decode them
         label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
 
@@ -485,9 +510,17 @@ class TwiWhisperManager:
             label_ids, skip_special_tokens=True
         )
 
+        # Debug: Print sample predictions and labels
+        print(
+            f"DEBUG: Sample prediction: {pred_str[0] if len(pred_str) > 0 else 'None'}"
+        )
+        print(f"DEBUG: Sample label: {label_str[0] if len(label_str) > 0 else 'None'}")
+
         # Compute WER and CER
         wer_score = wer(label_str, pred_str)
         cer_score = cer(label_str, pred_str)
+
+        print(f"DEBUG: WER: {wer_score}, CER: {cer_score}")
 
         return {"wer": wer_score, "cer": cer_score}
 
@@ -526,6 +559,9 @@ class TwiWhisperManager:
         model.config.suppress_tokens = []
         model.config.use_cache = False  # Disable cache for training
 
+        logger.info(f"Model vocab size: {model.config.vocab_size}")
+        logger.info(f"Model loaded successfully from {self.config.model_name}")
+
         # Training arguments
         training_args = Seq2SeqTrainingArguments(
             output_dir=self.config.output_dir,
@@ -539,20 +575,22 @@ class TwiWhisperManager:
             eval_steps=self.config.eval_steps,
             save_strategy="steps",
             save_steps=self.config.save_steps,
-            logging_steps=self.config.logging_steps,
+            logging_steps=5,  # More frequent logging
+            logging_first_step=True,
             report_to=self.config.report_to,
             load_best_model_at_end=True,
-            metric_for_best_model="wer",
+            metric_for_best_model="eval_wer",
             greater_is_better=False,
             fp16=use_cuda,
             dataloader_drop_last=False,
             predict_with_generate=True,
-            generation_max_length=225,
+            generation_max_length=448,
             generation_num_beams=1,
             remove_unused_columns=False,
             label_names=["labels"],
             logging_dir=f"{self.config.output_dir}/logs",
             gradient_checkpointing=False,
+            include_inputs_for_metrics=True,
         )
 
         # Create data collator
@@ -569,8 +607,41 @@ class TwiWhisperManager:
             compute_metrics=self.compute_metrics,
         )
 
-        # Train
+        # Test model with a sample before training
+        logger.info("Testing model with sample data...")
+        try:
+            sample = train_dataset[0]
+            test_input = {
+                "input_features": sample["input_features"].unsqueeze(0),
+                "labels": sample["labels"].unsqueeze(0),
+            }
+
+            with torch.no_grad():
+                test_output = model(**test_input)
+                logger.info(f"Test output keys: {list(test_output.keys())}")
+                logger.info(f"Test loss: {test_output.loss}")
+
+        except Exception as e:
+            logger.error(f"Model test failed: {e}")
+            raise
+
+        # Train with better logging
+        logger.info("Starting training...")
+        logger.info(f"Training samples: {len(train_dataset)}")
+        logger.info(f"Evaluation samples: {len(eval_dataset)}")
+        logger.info(f"Batch size: {self.config.batch_size}")
+        logger.info(f"Learning rate: {self.config.learning_rate}")
+
         trainer.train()
+
+        # Save the final model
+        logger.info("Saving final model...")
+        trainer.save_model()
+
+        # Run final evaluation
+        logger.info("Running final evaluation...")
+        eval_results = trainer.evaluate()
+        logger.info(f"Final evaluation results: {eval_results}")
 
         # Save
         trainer.save_model()
