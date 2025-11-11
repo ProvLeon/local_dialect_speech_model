@@ -556,7 +556,7 @@ class TwiWhisperTrainer:
             save_steps=self.config.save_steps,  # Changed to save per epoch
             logging_steps=self.config.logging_steps,
             report_to=self.config.report_to,
-            load_best_model_at_end=Ture,  # Disabled since no evaluation
+            load_best_model_at_end=True,  # Disabled since no evaluation
             # metric_for_best_model="wer",  # Disabled since no evaluation
             greater_is_better=True,
             fp16=use_cuda,
