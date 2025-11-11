@@ -65,61 +65,98 @@ class OptimizedEngineManager:
             (self.base_dir / dir_name).mkdir(exist_ok=True)
 
     def download_huggingface_model(self):
-        """Download and setup HuggingFace model."""
+        """Download and setup HuggingFace model with retry and timeout handling."""
         if not self.huggingface_repo:
             return True
 
         logger.info(f"📥 Downloading HuggingFace model: {self.huggingface_repo}")
 
         try:
-            import json
-
-            from huggingface_hub import hf_hub_download, snapshot_download
-
-            # Create models directory
+            # Create models directory first
             models_dir = self.base_dir / "models" / "huggingface"
             models_dir.mkdir(parents=True, exist_ok=True)
 
-            # Download model
-            model_path = snapshot_download(
-                repo_id=self.huggingface_repo,
-                local_dir=str(models_dir / self.huggingface_repo.replace("/", "_")),
-                local_dir_use_symlinks=False,
+            # Check if model already exists
+            existing_model = self._check_existing_model(models_dir)
+            if existing_model:
+                os.environ["HUGGINGFACE_MODEL_PATH"] = existing_model
+                self._detect_and_set_model_type(existing_model)
+                return True
+            import json
+            import time
+
+            import requests
+            from huggingface_hub import hf_hub_download, snapshot_download
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            # Configure retry strategy for downloads
+            retry_strategy = Retry(
+                total=3,
+                status_forcelist=[429, 500, 502, 503, 504],
+                method_whitelist=["HEAD", "GET", "OPTIONS"],
+                backoff_factor=1,
             )
 
-            # Detect model type by checking config and files
-            config_path = Path(model_path) / "config.json"
-            if config_path.exists():
-                with open(config_path, "r") as f:
-                    config = json.load(f)
+            # Create session with timeout and retry configuration
+            session = requests.Session()
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
 
-                # Check for multi-task indicators
-                if any(
-                    key in config
-                    for key in ["num_labels", "custom_model", "task_types"]
-                ) or any(
-                    file.exists()
-                    for file in [
-                        Path(model_path) / "intent_labels.json",
-                        Path(model_path) / "label_map.json",
-                        Path(model_path) / "classification_head.bin",
-                    ]
-                ):
-                    self.model_type = "multi"
-                    logger.info(
-                        "🔍 Detected multi-task model (transcription + intent classification)"
+            # Set longer timeout for large files
+            session.timeout = (30, 300)  # (connect_timeout, read_timeout)
+
+            logger.info(
+                "🔄 Starting model download with extended timeout (5 minutes)..."
+            )
+
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"📦 Download attempt {attempt + 1}/{max_retries}")
+
+                    # Download model with extended timeout
+                    model_path = snapshot_download(
+                        repo_id=self.huggingface_repo,
+                        local_dir=str(
+                            models_dir / self.huggingface_repo.replace("/", "_")
+                        ),
+                        local_dir_use_symlinks=False,
+                        resume_download=True,  # Enable resume for interrupted downloads
+                        timeout=300,  # 5 minute timeout
                     )
-                else:
-                    self.model_type = "single"
-                    logger.info("🔍 Detected single-task model (transcription only)")
-            else:
-                self.model_type = "single"
-                logger.info("🔍 No config found, assuming single-task model")
 
-            # Set environment variable for the downloaded model path
-            os.environ["HUGGINGFACE_MODEL_PATH"] = model_path
-            os.environ["HUGGINGFACE_MODEL_TYPE"] = self.model_type
+                    logger.info(
+                        f"✅ Model downloaded successfully on attempt {attempt + 1}"
+                    )
+                    break
 
+                except Exception as download_error:
+                    logger.warning(
+                        f"⚠️ Download attempt {attempt + 1} failed: {download_error}"
+                    )
+
+                    if attempt < max_retries - 1:
+                        wait_time = (
+                            attempt + 1
+                        ) * 30  # Progressive backoff: 30s, 60s, 90s
+                        logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                        time.sleep(wait_time)
+                    else:
+                        # Try fallback download method
+                        logger.info("🔄 Trying fallback individual file download...")
+                        model_path = self._download_model_files_individually(
+                            models_dir, session
+                        )
+                        if model_path:
+                            logger.info("✅ Fallback download successful")
+                            break
+                        else:
+                            raise download_error
+
+            # Set up model path and detect type
+            self._detect_and_set_model_type(model_path)
             logger.info(f"✅ Model downloaded successfully: {model_path}")
             return True
 
@@ -130,7 +167,150 @@ class OptimizedEngineManager:
             return False
         except Exception as e:
             logger.error(f"❌ Failed to download HuggingFace model: {e}")
+            self._show_manual_download_instructions()
             return False
+
+    def _download_model_files_individually(self, models_dir, session):
+        """
+        Fallback method to download model files individually.
+        This can help when snapshot_download times out on large files.
+        """
+        try:
+            from huggingface_hub import hf_hub_download
+
+            model_local_dir = models_dir / self.huggingface_repo.replace("/", "_")
+            model_local_dir.mkdir(parents=True, exist_ok=True)
+
+            # Essential files to download (skip large pytorch_model.bin initially)
+            essential_files = [
+                "config.json",
+                "generation_config.json",
+                "tokenizer_config.json",
+                "vocab.json",
+                "merges.txt",
+                "normalizer.json",
+                "added_tokens.json",
+                "special_tokens_map.json",
+                "preprocessor_config.json",
+            ]
+
+            logger.info(f"📦 Downloading essential files for {self.huggingface_repo}")
+
+            # Download essential files first
+            for filename in essential_files:
+                try:
+                    logger.info(f"⬇️ Downloading {filename}...")
+                    hf_hub_download(
+                        repo_id=self.huggingface_repo,
+                        filename=filename,
+                        local_dir=str(model_local_dir),
+                        local_dir_use_symlinks=False,
+                        timeout=60,  # Shorter timeout for small files
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not download {filename}: {e}")
+
+            # Try to download the model weights with extended timeout
+            try:
+                logger.info(
+                    "⬇️ Downloading pytorch_model.bin (this may take several minutes)..."
+                )
+                hf_hub_download(
+                    repo_id=self.huggingface_repo,
+                    filename="pytorch_model.bin",
+                    local_dir=str(model_local_dir),
+                    local_dir_use_symlinks=False,
+                    resume_download=True,
+                    timeout=600,  # 10 minute timeout for large file
+                )
+                logger.info("✅ Model weights downloaded successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to download model weights: {e}")
+                logger.info(
+                    "🔄 You may need to download the model manually or use a smaller model"
+                )
+                return None
+
+            return str(model_local_dir)
+
+        except Exception as e:
+            logger.error(f"❌ Individual file download failed: {e}")
+            return None
+
+    def _detect_and_set_model_type(self, model_path):
+        """Detect model type and set environment variables."""
+        # Detect model type by checking config and files
+        config_path = Path(model_path) / "config.json"
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                config = json.load(f)
+
+            # Check for multi-task indicators
+            if any(
+                key in config for key in ["num_labels", "custom_model", "task_types"]
+            ) or any(
+                file.exists()
+                for file in [
+                    Path(model_path) / "intent_labels.json",
+                    Path(model_path) / "label_map.json",
+                    Path(model_path) / "classification_head.bin",
+                ]
+            ):
+                self.model_type = "multi"
+                logger.info(
+                    "🔍 Detected multi-task model (transcription + intent classification)"
+                )
+            else:
+                self.model_type = "single"
+                logger.info("🔍 Detected single-task model (transcription only)")
+        else:
+            self.model_type = "single"
+            logger.info("🔍 No config found, assuming single-task model")
+
+        # Set environment variables
+        os.environ["HUGGINGFACE_MODEL_PATH"] = model_path
+        os.environ["HUGGINGFACE_MODEL_TYPE"] = self.model_type
+
+    def _check_existing_model(self, models_dir):
+        """Check if the model already exists locally."""
+        model_local_dir = models_dir / self.huggingface_repo.replace("/", "_")
+
+        if model_local_dir.exists():
+            # Check if essential files exist
+            essential_files = ["config.json"]
+            if all((model_local_dir / f).exists() for f in essential_files):
+                logger.info(f"✅ Found existing model at: {model_local_dir}")
+                return str(model_local_dir)
+
+        return None
+
+    def _show_manual_download_instructions(self):
+        """Show instructions for manual model download."""
+        models_dir = self.base_dir / "models" / "huggingface"
+        target_dir = models_dir / self.huggingface_repo.replace("/", "_")
+
+        logger.error("=" * 60)
+        logger.error("📋 MANUAL DOWNLOAD INSTRUCTIONS")
+        logger.error("=" * 60)
+        logger.error(
+            "Due to network timeouts, you may need to download the model manually."
+        )
+        logger.error("")
+        logger.error("Option 1 - Use git to clone the model:")
+        logger.error(f"  mkdir -p {target_dir}")
+        logger.error(f"  cd {target_dir}")
+        logger.error(f"  git clone https://huggingface.co/{self.huggingface_repo} .")
+        logger.error("")
+        logger.error("Option 2 - Download using huggingface-cli:")
+        logger.error(
+            f"  huggingface-cli download {self.huggingface_repo} --local-dir {target_dir}"
+        )
+        logger.error("")
+        logger.error("Option 3 - Use a smaller/faster model:")
+        logger.error("  python main.py server --huggingface openai/whisper-small")
+        logger.error("")
+        logger.error("After manual download, restart the server.")
+        logger.error("=" * 60)
 
     def run_setup(self):
         """Run the setup script."""
