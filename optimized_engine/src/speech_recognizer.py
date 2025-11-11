@@ -55,9 +55,11 @@ try:
     from src.huggingface_model_adapter import create_huggingface_adapter
 
     HUGGINGFACE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    import traceback
+    logger.warning(f"⚠️ HuggingFace model adapter not available, error: {e}")
+    logger.warning(traceback.format_exc())
     HUGGINGFACE_AVAILABLE = False
-    logger.warning("⚠️ HuggingFace model adapter not available")
 
 
 class AudioProcessor:
