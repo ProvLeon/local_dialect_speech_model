@@ -385,7 +385,9 @@ class MultiTaskTrainer(Seq2SeqTrainer):
         super().__init__(*args, **kwargs)
         self.intent_loss_weight = intent_loss_weight
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(
+        self, model, inputs, return_outputs=False, num_items_in_batch=None
+    ):
         outputs = model(**inputs)
         transcription_loss = outputs.get("transcription_loss")
         classification_loss = outputs.get("classification_loss")
