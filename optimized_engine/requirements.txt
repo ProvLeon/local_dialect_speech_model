@@ -2,8 +2,9 @@
 # ===================================================
 
 # Core ML and Audio Processing
-torch>=2.0.0,<2.1.0
-torchaudio>=2.0.0,<2.1.0
+torch>=2.1.0
+torchaudio>=2.1.0
+torchvision>=0.16.0
 openai-whisper>=20231117
 numpy>=1.21.0
 librosa>=0.10.0
@@ -11,10 +12,11 @@ soundfile>=0.12.0
 scipy>=1.9.0
 
 # NLP and Transformers (compatible with PyTorch 2.0)
-transformers>=4.30.0,<4.35.0
+transformers>=4.36.0
 datasets>=2.12.0
-tokenizers>=0.13.0
-huggingface-hub>=0.15.0,<0.20.0
+tokenizers>=0.15.0
+huggingface-hub>=0.20.0
+accelerate>=0.25.0
 
 # Web Framework and API
 fastapi>=0.100.0
@@ -40,6 +42,7 @@ pydub>=0.25.0
 mutagen>=1.46.0
 audioread>=3.0.0
 sounddevice>=0.4.0
+audiomentations>=0.30.0
 
 # Configuration and Logging
 pyyaml>=6.0

@@ -8,8 +8,9 @@ numpy>=1.21.0,<1.25.0
 scipy>=1.9.0,<1.11.0
 
 # PyTorch ecosystem (compatible set)
-torch==2.0.0
-torchaudio==2.0.0
+torch>=2.1.0
+torchaudio>=2.1.0
+torchvision>=0.16.0
 
 # Audio processing
 librosa>=0.9.0,<0.11.0
@@ -17,11 +18,11 @@ soundfile>=0.10.0,<0.13.0
 openai-whisper>=20231117
 
 # HuggingFace ecosystem (compatible versions)
-transformers>=4.30.0,<4.35.0
-tokenizers>=0.13.0,<0.15.0
-huggingface-hub>=0.15.0,<0.18.0
+transformers>=4.36.0
+tokenizers>=0.15.0
+huggingface-hub>=0.20.0
+accelerate>=0.25.0
 datasets>=2.12.0,<2.15.0
-accelerate>=0.20.0,<0.25.0
 peft==0.6.0
 
 # Machine learning utilities
@@ -48,3 +49,4 @@ fsspec>=2023.1.0,<=2023.10.0
 tqdm>=4.64.0
 pyyaml>=6.0
 sounddevice>=0.4.0
+audiomentations>=0.30.0
