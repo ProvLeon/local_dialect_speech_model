@@ -591,7 +591,7 @@ def main():
         help="Logging backend (e.g., tensorboard, wandb)",
     )
     args = parser.parse_args()
-    args.model_size = "small"  # Force tiny model to conserve memory
+    # args.model_size = "small"  # Force tiny model to conserve memory
 
     config = TwiWhisperConfig(
         model_size=args.model_size,
