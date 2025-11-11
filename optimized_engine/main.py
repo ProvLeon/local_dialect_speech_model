@@ -18,14 +18,14 @@ Author: AI Assistant
 Date: 2025-11-05
 """
 
-import os
-import sys
 import argparse
 import asyncio
 import logging
-from pathlib import Path
+import os
 import signal
+import sys
 import time
+from pathlib import Path
 
 # Add src to path for imports
 current_dir = Path(__file__).parent
@@ -40,14 +40,18 @@ logger = logging.getLogger(__name__)
 
 
 import uvicorn
+
 from src.api_server import app
+
 
 class OptimizedEngineManager:
     """Manager for the optimized speech recognition engine."""
 
-    def __init__(self):
+    def __init__(self, huggingface_repo=None):
         self.base_dir = Path(__file__).parent
         self.running = False
+        self.huggingface_repo = huggingface_repo
+        self.model_type = None  # Will be detected: 'single' or 'multi'
 
     def setup_environment(self):
         """Setup environment variables and paths."""
@@ -60,11 +64,83 @@ class OptimizedEngineManager:
         for dir_name in ["logs", "data", "models"]:
             (self.base_dir / dir_name).mkdir(exist_ok=True)
 
+    def download_huggingface_model(self):
+        """Download and setup HuggingFace model."""
+        if not self.huggingface_repo:
+            return True
+
+        logger.info(f"📥 Downloading HuggingFace model: {self.huggingface_repo}")
+
+        try:
+            import json
+
+            from huggingface_hub import hf_hub_download, snapshot_download
+
+            # Create models directory
+            models_dir = self.base_dir / "models" / "huggingface"
+            models_dir.mkdir(parents=True, exist_ok=True)
+
+            # Download model
+            model_path = snapshot_download(
+                repo_id=self.huggingface_repo,
+                local_dir=str(models_dir / self.huggingface_repo.replace("/", "_")),
+                local_dir_use_symlinks=False,
+            )
+
+            # Detect model type by checking config and files
+            config_path = Path(model_path) / "config.json"
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    config = json.load(f)
+
+                # Check for multi-task indicators
+                if any(
+                    key in config
+                    for key in ["num_labels", "custom_model", "task_types"]
+                ) or any(
+                    file.exists()
+                    for file in [
+                        Path(model_path) / "intent_labels.json",
+                        Path(model_path) / "label_map.json",
+                        Path(model_path) / "classification_head.bin",
+                    ]
+                ):
+                    self.model_type = "multi"
+                    logger.info(
+                        "🔍 Detected multi-task model (transcription + intent classification)"
+                    )
+                else:
+                    self.model_type = "single"
+                    logger.info("🔍 Detected single-task model (transcription only)")
+            else:
+                self.model_type = "single"
+                logger.info("🔍 No config found, assuming single-task model")
+
+            # Set environment variable for the downloaded model path
+            os.environ["HUGGINGFACE_MODEL_PATH"] = model_path
+            os.environ["HUGGINGFACE_MODEL_TYPE"] = self.model_type
+
+            logger.info(f"✅ Model downloaded successfully: {model_path}")
+            return True
+
+        except ImportError:
+            logger.error(
+                "❌ huggingface_hub not installed. Run: pip install huggingface_hub"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"❌ Failed to download HuggingFace model: {e}")
+            return False
+
     def run_setup(self):
         """Run the setup script."""
         logger.info("🔧 Running setup...")
 
         try:
+            # Download HuggingFace model if specified
+            if not self.download_huggingface_model():
+                return False
+
             # Import and run setup
             sys.path.insert(0, str(self.base_dir))
             from setup import main as setup_main
@@ -82,8 +158,13 @@ class OptimizedEngineManager:
             return False
 
     def start_server(self, host="0.0.0.0", port=8000, reload=False):
-        """Start the FastAPI server."""
+        """Start the optimized FastAPI server with HuggingFace model support."""
         logger.info(f"🚀 Starting server on {host}:{port}")
+
+        # Download and setup HuggingFace model if specified
+        if self.huggingface_repo and not self.download_huggingface_model():
+            logger.error("❌ Failed to setup HuggingFace model")
+            return False
 
         try:
             # Override port from environment
@@ -345,6 +426,7 @@ def create_parser():
 Examples:
   python main.py server                    # Start API server
   python main.py server --port 9000       # Start on custom port
+  python main.py server --huggingface username/model-name  # Use HuggingFace model
   python main.py test                      # Run tests
   python main.py demo                      # Interactive demo
   python main.py status                    # Show status
@@ -360,6 +442,11 @@ Examples:
     server_parser.add_argument("--port", type=int, default=8000, help="Port number")
     server_parser.add_argument(
         "--reload", action="store_true", help="Enable auto-reload"
+    )
+    server_parser.add_argument(
+        "--huggingface",
+        type=str,
+        help="HuggingFace model repository ID (e.g., username/model-name)",
     )
 
     # Test command
@@ -388,8 +475,14 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
 
-    # Create manager
-    manager = OptimizedEngineManager()
+    # Extract HuggingFace repo from server args if present
+    huggingface_repo = None
+    if args.command == "server" and hasattr(args, "huggingface") and args.huggingface:
+        huggingface_repo = args.huggingface
+        logger.info(f"🤗 Using HuggingFace model: {huggingface_repo}")
+
+    # Create manager with HuggingFace support
+    manager = OptimizedEngineManager(huggingface_repo=huggingface_repo)
     manager.setup_environment()
 
     # Print banner

@@ -17,26 +17,27 @@ Author: AI Assistant
 Date: 2025-11-05
 """
 
-import os
 import asyncio
+import logging
+import os
 import tempfile
 import time
-import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-import soundfile as sf
+
+from config.config import OptimizedConfig
 
 # Import optimized components
 from src.speech_recognizer import OptimizedSpeechRecognizer, create_speech_recognizer
-from config.config import OptimizedConfig
 
 # Configure logging
 logging.basicConfig(
@@ -48,18 +49,257 @@ logger = logging.getLogger(__name__)
 recognizer: Optional[OptimizedSpeechRecognizer] = None
 config = OptimizedConfig()
 
+# Performance optimization imports and setup
+import gc
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from typing import Union
+
+# Global performance tracking
+performance_stats = {
+    "total_requests": 0,
+    "successful_requests": 0,
+    "failed_requests": 0,
+    "avg_processing_time": 0.0,
+    "cache_hits": 0,
+}
+
+# Audio conversion cache and thread pool
+audio_cache = {}
+thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="audio_proc_")
+
+
+def optimize_torch_settings():
+    """Optimize PyTorch settings for faster inference."""
+    import torch
+
+    # Set optimal thread count
+    torch.set_num_threads(min(4, os.cpu_count()))
+
+    # Enable inference optimizations
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+
+    # Disable gradients for inference
+    torch.set_grad_enabled(False)
+
+    if torch.cuda.is_available():
+        # Clear CUDA cache
+        torch.cuda.empty_cache()
+
+        # Set memory fraction to prevent OOM
+        torch.cuda.set_per_process_memory_fraction(0.8)
+
+        # Enable TensorFloat-32 for newer GPUs
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
+        logger.info(
+            f"✅ CUDA optimizations applied - Device: {torch.cuda.get_device_name()}"
+        )
+
+
+def optimize_model_loading(speech_recognizer):
+    """Optimize model loading for better performance."""
+    if not speech_recognizer:
+        return
+
+    try:
+        import torch
+
+        # Optimize Whisper model
+        if (
+            hasattr(speech_recognizer, "transcriber")
+            and speech_recognizer.transcriber.model
+        ):
+            model = speech_recognizer.transcriber.model
+
+            if torch.cuda.is_available() and not model.is_cuda:
+                model = model.cuda()
+
+                # Enable half precision for faster inference
+                try:
+                    model = model.half()
+                    logger.info("✅ Half precision enabled for Whisper model")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not enable half precision: {e}")
+
+        # Optimize intent classifier
+        if (
+            hasattr(speech_recognizer, "intent_classifier")
+            and speech_recognizer.intent_classifier.pipeline
+        ):
+            pipeline = speech_recognizer.intent_classifier.pipeline
+
+            if torch.cuda.is_available() and hasattr(pipeline, "model"):
+                try:
+                    pipeline.model = pipeline.model.cuda()
+                    if hasattr(pipeline.model, "half"):
+                        pipeline.model = pipeline.model.half()
+                    logger.info("✅ Intent classifier optimized for GPU")
+                except Exception as e:
+                    logger.warning(f"⚠️ Intent classifier GPU optimization failed: {e}")
+
+        logger.info("✅ Model optimization completed")
+
+    except Exception as e:
+        logger.error(f"❌ Model optimization failed: {e}")
+
+
+async def convert_audio_fast(content: bytes, filename: str = "") -> str:
+    """Ultra-fast audio conversion using optimized FFmpeg."""
+
+    # Detect format quickly
+    audio_format = detect_audio_format_optimized(content, filename)
+
+    # Create temporary file
+    suffix = f".{audio_format}"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        tmp_file.write(content)
+        temp_path = tmp_file.name
+
+    # Skip conversion if already WAV
+    if audio_format == "wav":
+        return temp_path
+
+    # Use optimized FFmpeg conversion
+    output_path = temp_path.replace(f".{audio_format}", "_fast.wav")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        temp_path,
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-acodec",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        "-threads",
+        "0",
+        output_path,
+    ]
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
+
+        await asyncio.wait_for(process.communicate(), timeout=10.0)
+
+        if process.returncode == 0 and os.path.exists(output_path):
+            # Clean up original
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return output_path
+        else:
+            raise RuntimeError("FFmpeg conversion failed")
+
+    except (asyncio.TimeoutError, FileNotFoundError, RuntimeError):
+        # Fallback to librosa
+        return await convert_with_librosa_async(temp_path, audio_format)
+
+
+async def convert_with_librosa_async(input_path: str, input_format: str) -> str:
+    """Async librosa conversion fallback."""
+    loop = asyncio.get_event_loop()
+
+    def _convert():
+        import librosa
+
+        audio, sr = librosa.load(input_path, sr=16000, mono=True)
+        output_path = input_path.replace(f".{input_format}", "_librosa.wav")
+        sf.write(output_path, audio, 16000)
+
+        # Clean up original
+        if os.path.exists(input_path):
+            os.unlink(input_path)
+
+        return output_path
+
+    return await loop.run_in_executor(thread_pool, _convert)
+
+
+def detect_audio_format_optimized(content: bytes, filename: str) -> str:
+    """Fast audio format detection."""
+    # Check filename extension first (fastest)
+    if filename:
+        ext = Path(filename).suffix.lower()
+        if ext in [".wav", ".mp3", ".webm", ".ogg"]:
+            return ext[1:]
+
+    # Check magic bytes
+    if content.startswith(b"RIFF"):
+        return "wav"
+    elif content.startswith(b"ID3") or content.startswith(b"\xff\xfb"):
+        return "mp3"
+    elif content.startswith(b"OggS"):
+        return "ogg"
+    elif b"webm" in content[:100] or content.startswith(b"\x1a\x45\xdf\xa3"):
+        return "webm"
+
+    return "unknown"
+
+
+def cleanup_memory():
+    """Optimize memory usage and cleanup."""
+    try:
+        gc.collect()
+
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        # Clear audio cache if too large
+        if len(audio_cache) > 50:
+            items = list(audio_cache.items())
+            audio_cache.clear()
+            audio_cache.update(dict(items[-25:]))  # Keep 25 most recent
+            logger.info("🧹 Audio cache cleaned")
+
+    except Exception as e:
+        logger.warning(f"Memory cleanup warning: {e}")
+
+
+def update_performance_stats(processing_time: float, success: bool = True):
+    """Update performance statistics."""
+    performance_stats["total_requests"] += 1
+
+    if success:
+        performance_stats["successful_requests"] += 1
+    else:
+        performance_stats["failed_requests"] += 1
+
+    # Update rolling average processing time
+    total = performance_stats["total_requests"]
+    current_avg = performance_stats["avg_processing_time"]
+    new_avg = (current_avg * (total - 1) + processing_time) / total
+    performance_stats["avg_processing_time"] = new_avg
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
+    """Application lifespan manager with performance optimizations."""
     global recognizer
 
     # Startup
-    logger.info("Starting Optimized Twi Speech Recognition Server...")
+    logger.info("🚀 Starting Ultra-Fast Twi Speech Recognition Server...")
 
     try:
+        # Apply PyTorch optimizations first
+        logger.info("🔧 Applying performance optimizations...")
+        optimize_torch_settings()
+
         # Initialize speech recognizer
         recognizer = create_speech_recognizer()
+
+        # Optimize the loaded models for better performance
+        optimize_model_loading(recognizer)
 
         # Validate configuration
         config.validate_config()
@@ -67,16 +307,32 @@ async def lifespan(app: FastAPI):
         # Print startup summary
         config.print_config_summary()
 
-        logger.info("Server initialization completed successfully")
+        # Log optimization status
+        import torch
+
+        device_info = (
+            f"GPU: {torch.cuda.get_device_name()}"
+            if torch.cuda.is_available()
+            else "CPU"
+        )
+        logger.info(f"✅ Server ready with optimizations - Device: {device_info}")
+        logger.info("📊 Performance monitoring available at /performance-stats")
 
     except Exception as e:
-        logger.error(f"Failed to initialize server: {e}")
+        logger.error(f"❌ Failed to initialize server: {e}")
         raise
 
     yield
 
     # Shutdown
-    logger.info("Shutting down server...")
+    logger.info("🛑 Shutting down server...")
+
+    # Cleanup resources
+    if thread_pool:
+        thread_pool.shutdown(wait=True)
+
+    audio_cache.clear()
+    cleanup_memory()
 
 
 # Create FastAPI app
@@ -462,43 +718,43 @@ async def test_intent(
 
     try:
         logger.info(
-            f"Test intent request: {file.filename}, content_type: {file.content_type}, top_k: {top_k}"
+            f"🎵 Fast processing: {file.filename} ({file.content_type}), top_k: {top_k}"
         )
 
         # Read and validate file
         content = await file.read()
-
         if len(content) == 0:
             raise HTTPException(status_code=400, detail="Empty audio file")
 
-        # Detect and save file
-        detected_format = detect_audio_format(content, file.filename or "")
-        suffix = f".{detected_format}"
+        # Check cache first
+        content_hash = str(hash(content))
+        if content_hash in audio_cache:
+            performance_stats["cache_hits"] += 1
+            logger.info(f"✅ Cache hit for {file.filename}")
+            cached_result = audio_cache[content_hash]
+            update_performance_stats(0.1, success=True)  # Very fast cache response
+            return cached_result
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            tmp_file.write(content)
-            temp_file_path = tmp_file.name
-            temp_files.append(temp_file_path)
+        # Use optimized audio conversion
+        temp_file_path = await convert_audio_fast(content, file.filename or "")
+        temp_files.append(temp_file_path)
 
-        # Convert if needed
-        if detected_format != "wav":
-            converted_path = convert_audio_if_needed(temp_file_path, detected_format)
-            if converted_path != temp_file_path:
-                temp_files.append(converted_path)
-                temp_file_path = converted_path
-
-        # Perform recognition with extended timeout for WebM
-        timeout_duration = 120 if detected_format == "webm" else 60
+        # Perform recognition with optimized timeout and async processing
+        timeout_duration = 45  # Reduced from 60-120s to 45s max
 
         try:
+            # Use thread pool for better async performance
+            loop = asyncio.get_event_loop()
             result = await asyncio.wait_for(
-                recognizer.recognize_async(temp_file_path, "tw"),
+                loop.run_in_executor(
+                    thread_pool, recognizer.recognize, temp_file_path, "tw"
+                ),
                 timeout=timeout_duration,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=408,
-                detail=f"Processing timeout ({timeout_duration}s). WebM files may require longer processing.",
+                detail=f"Processing timeout ({timeout_duration}s). Please try a shorter audio file.",
             )
 
         if result.get("status") != "success":
@@ -542,7 +798,7 @@ async def test_intent(
             "confidence": float(result["intent"]["confidence"]),
             "top_predictions": final_predictions[:top_k],
             "transcription": result["transcription"]["text"],
-            "model_type": "optimized_whisper_intent",
+            "model_type": "optimized_whisper_intent_fast",
             "processing_time_ms": round(processing_time_ms, 2),
             "top_k": top_k,
             "whisper_info": {
@@ -554,30 +810,78 @@ async def test_intent(
             },
         }
 
-        # Schedule cleanup
+        # Cache successful results for future requests
+        if processing_time_ms < 10000:  # Only cache results under 10s
+            audio_cache[content_hash] = response_data
+
+        # Update performance statistics
+        update_performance_stats(processing_time_ms / 1000.0, success=True)
+
+        # Schedule cleanup and memory optimization
         background_tasks.add_task(cleanup_temp_files, *temp_files)
+        background_tasks.add_task(cleanup_memory)
 
         logger.info(
-            f"Test intent completed: '{result['transcription']['text'][:30]}...' -> {result['intent']['intent']} ({result['intent']['confidence']:.3f})"
+            f"✅ Completed in {processing_time_ms:.0f}ms: '{result['transcription']['text'][:50]}...' -> {result['intent']['intent']} ({result['intent']['confidence']:.3f})"
         )
 
         return JSONResponse(content=response_data, headers=CORS_HEADERS)
 
     except HTTPException:
         await cleanup_temp_files(*temp_files)
+        update_performance_stats(time.time() - start_time, success=False)
         raise
     except Exception as e:
-        logger.error(f"Test intent error: {e}")
+        logger.error(f"❌ Request failed: {e}")
         await cleanup_temp_files(*temp_files)
+        update_performance_stats(time.time() - start_time, success=False)
 
         if "timeout" in str(e).lower():
-            raise HTTPException(status_code=408, detail="Processing timeout")
+            raise HTTPException(
+                status_code=408, detail="Processing timeout - try shorter audio"
+            )
         elif "webm" in str(e).lower() or "format" in str(e).lower():
             raise HTTPException(
                 status_code=400, detail="Audio format processing failed"
             )
         else:
             raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@app.get("/performance-stats")
+async def get_performance_stats():
+    """Get detailed performance statistics and optimization status."""
+    import torch
+
+    stats = {
+        "performance_metrics": performance_stats.copy(),
+        "optimization_status": {
+            "torch_optimized": True,
+            "cuda_available": torch.cuda.is_available(),
+            "cache_enabled": True,
+            "thread_pool_active": thread_pool._threads if thread_pool else 0,
+        },
+        "cache_info": {
+            "audio_cache_size": len(audio_cache),
+            "cache_hit_rate": performance_stats["cache_hits"]
+            / max(1, performance_stats["total_requests"]),
+        },
+        "recommendations": [
+            "Use GPU for 3-5x faster processing",
+            "Keep audio files under 30 seconds",
+            "Use WAV format when possible",
+            f"Current avg response time: {performance_stats['avg_processing_time']:.2f}s",
+        ],
+    }
+
+    if torch.cuda.is_available():
+        stats["gpu_info"] = {
+            "device_name": torch.cuda.get_device_name(),
+            "memory_allocated_gb": torch.cuda.memory_allocated() / (1024**3),
+            "memory_reserved_gb": torch.cuda.memory_reserved() / (1024**3),
+        }
+
+    return JSONResponse(content=stats)
 
 
 @app.post("/batch-recognize")

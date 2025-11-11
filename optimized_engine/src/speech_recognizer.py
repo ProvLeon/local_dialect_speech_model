@@ -16,30 +16,30 @@ Author: AI Assistant
 Date: 2025-11-05
 """
 
-import os
-import time
-import logging
-import warnings
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any, Union
 import asyncio
+import json
+import logging
+import os
 import threading
+import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import librosa
+import numpy as np
+import soundfile as sf
 import torch
 import whisper
-import numpy as np
-import librosa
-import soundfile as sf
+from datasets import Dataset
 from transformers import (
-    AutoTokenizer,
     AutoModelForSequenceClassification,
-    pipeline,
+    AutoTokenizer,
     Trainer,
     TrainingArguments,
+    pipeline,
 )
-from datasets import Dataset
-import json
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -47,6 +47,22 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Import configuration
 from config.config import OptimizedConfig
+
+# Import HuggingFace adapter
+try:
+    from src.huggingface_model_adapter import create_huggingface_adapter
+
+    HUGGINGFACE_AVAILABLE = True
+except ImportError:
+    HUGGINGFACE_AVAILABLE = False
+
+# Import HuggingFace adapter
+try:
+    from src.huggingface_model_adapter import create_huggingface_adapter
+
+    HUGGINGFACE_AVAILABLE = True
+except ImportError:
+    HUGGINGFACE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -512,10 +528,9 @@ class OptimizedSpeechRecognizer:
     def __init__(self, config: OptimizedConfig = None):
         self.config = config or OptimizedConfig()
 
-        # Initialize components
-        self.audio_processor = AudioProcessor(self.config)
-        self.transcriber = WhisperTranscriber(self.config)
-        self.intent_classifier = TwiIntentClassifier(self.config)
+        # HuggingFace model components
+        self.huggingface_adapter = None
+        self.use_huggingface = False
 
         # Performance tracking
         self.stats = {
@@ -527,7 +542,49 @@ class OptimizedSpeechRecognizer:
             "intent_accuracy": 0.0,
         }
 
+        # Check if HuggingFace model should be used
+        if self._should_use_huggingface():
+            self._initialize_huggingface_model()
+        else:
+            # Initialize standard components
+            self.audio_processor = AudioProcessor(self.config)
+            self.transcriber = WhisperTranscriber(self.config)
+            self.intent_classifier = TwiIntentClassifier(self.config)
+
         logger.info("OptimizedSpeechRecognizer initialized successfully")
+
+    def _should_use_huggingface(self) -> bool:
+        """Check if HuggingFace model should be used."""
+        return (
+            HUGGINGFACE_AVAILABLE
+            and os.environ.get("HUGGINGFACE_MODEL_PATH")
+            and Path(os.environ.get("HUGGINGFACE_MODEL_PATH")).exists()
+        )
+
+    def _initialize_huggingface_model(self):
+        """Initialize HuggingFace model adapter."""
+        try:
+            model_path = os.environ.get("HUGGINGFACE_MODEL_PATH")
+            model_type = os.environ.get("HUGGINGFACE_MODEL_TYPE", "single")
+
+            logger.info(f"🤗 Initializing HuggingFace model: {model_path}")
+            logger.info(f"🎯 Model type: {model_type}")
+
+            self.huggingface_adapter = create_huggingface_adapter(
+                model_path, device=self.config.get_device()
+            )
+            self.use_huggingface = True
+
+            logger.info("✅ HuggingFace model adapter initialized successfully")
+
+        except Exception as e:
+            logger.error(f"❌ HuggingFace model initialization failed: {e}")
+            logger.info("🔄 Falling back to standard components")
+            self.use_huggingface = False
+            # Initialize standard components as fallback
+            self.audio_processor = AudioProcessor(self.config)
+            self.transcriber = WhisperTranscriber(self.config)
+            self.intent_classifier = TwiIntentClassifier(self.config)
 
     def recognize(self, audio_path: str, language: str = None) -> Dict[str, Any]:
         """
@@ -544,6 +601,20 @@ class OptimizedSpeechRecognizer:
         self.stats["total_requests"] += 1
 
         try:
+            # Use HuggingFace adapter if available
+            if self.use_huggingface and self.huggingface_adapter:
+                result = self.huggingface_adapter.recognize(audio_path, language)
+
+                # Update statistics for HuggingFace results
+                if result.get("status") == "success":
+                    self.stats["successful_requests"] += 1
+                    self._update_avg_processing_time(result.get("processing_time", 0))
+                else:
+                    self.stats["failed_requests"] += 1
+
+                return result
+
+            # Standard pipeline
             # Step 1: Load and preprocess audio
             audio_data = self.audio_processor.load_audio(audio_path)
             if audio_data is None:
@@ -647,6 +718,11 @@ class OptimizedSpeechRecognizer:
 
     def get_supported_intents(self) -> List[Dict[str, Any]]:
         """Get list of supported intents with descriptions."""
+        if self.use_huggingface and self.huggingface_adapter:
+            # Use HuggingFace adapter's intent list
+            return self.huggingface_adapter.get_supported_intents()
+
+        # Standard model intents
         intents = []
 
         for intent, config in self.config.INTENTS.items():
@@ -669,19 +745,37 @@ class OptimizedSpeechRecognizer:
             self.stats["successful_requests"] / max(1, self.stats["total_requests"])
         ) * 100
 
-        return {
+        base_stats = {
             **self.stats,
             "success_rate": success_rate,
             "error_rate": 100 - success_rate,
-            "model_info": {
+        }
+
+        if self.use_huggingface and self.huggingface_adapter:
+            # Include HuggingFace model info
+            hf_info = self.huggingface_adapter.get_model_info()
+            base_stats["model_info"] = {
+                **hf_info,
+                "model_source": "huggingface",
+            }
+        else:
+            # Standard model info
+            base_stats["model_info"] = {
                 "whisper_model": self.config.WHISPER["model_size"],
                 "device": self.config.get_device(),
                 "supported_intents": len(self.config.INTENTS),
-            },
-        }
+                "model_source": "standard",
+            }
+
+        return base_stats
 
     def health_check(self) -> Dict[str, Any]:
         """Perform system health check."""
+        if self.use_huggingface and self.huggingface_adapter:
+            # Use HuggingFace adapter's health check
+            return self.huggingface_adapter.health_check()
+
+        # Standard health check
         health_status = {
             "status": "healthy",
             "components": {},
