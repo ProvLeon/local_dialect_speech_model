@@ -22,6 +22,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 class ModelDownloader:
     """Robust HuggingFace model downloader with timeout and retry handling."""
 
-    def __init__(self, base_dir: str = None):
+    def __init__(self, base_dir: Optional[str] = None):
         """Initialize the model downloader."""
         self.base_dir = Path(base_dir) if base_dir else Path(__file__).parent
         self.models_dir = self.base_dir / "models" / "huggingface"
@@ -63,7 +64,7 @@ class ModelDownloader:
         retry_strategy = Retry(
             total=self.max_retries,
             status_forcelist=[429, 500, 502, 503, 504, 520, 521, 522, 524],
-            method_whitelist=["HEAD", "GET", "OPTIONS"],
+            allowed_methods=["HEAD", "GET", "OPTIONS"],
             backoff_factor=2,
             raise_on_status=False,
         )
@@ -72,7 +73,6 @@ class ModelDownloader:
         adapter = HTTPAdapter(max_retries=retry_strategy, pool_maxsize=20)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
-        session.timeout = (self.connect_timeout, self.read_timeout)
 
         return session
 
@@ -129,38 +129,67 @@ class ModelDownloader:
     def download_with_huggingface_hub(self, repo_id: str) -> Optional[str]:
         """Download model using huggingface_hub with enhanced settings."""
         try:
+            import concurrent.futures
+            import os
+
             from huggingface_hub import snapshot_download
 
             model_dir = self.models_dir / repo_id.replace("/", "_")
             logger.info(f"📦 Downloading {repo_id} using huggingface_hub...")
 
-            for attempt in range(self.max_retries):
-                try:
-                    logger.info(f"🔄 Attempt {attempt + 1}/{self.max_retries}")
+            # Set environment variables for huggingface_hub timeout
+            original_timeout = os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT")
+            os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = str(self.read_timeout)
 
-                    model_path = snapshot_download(
-                        repo_id=repo_id,
-                        local_dir=str(model_dir),
-                        local_dir_use_symlinks=False,
-                        resume_download=True,
-                        timeout=self.read_timeout,
-                        max_workers=1,  # Reduce concurrent downloads
-                    )
+            try:
+                for attempt in range(self.max_retries):
+                    try:
+                        logger.info(f"🔄 Attempt {attempt + 1}/{self.max_retries}")
 
-                    logger.info(f"✅ Successfully downloaded to: {model_path}")
-                    return model_path
+                        # Use ThreadPoolExecutor with timeout for cross-platform compatibility
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=1
+                        ) as executor:
+                            future = executor.submit(
+                                snapshot_download,
+                                repo_id=repo_id,
+                                local_dir=str(model_dir),
+                                local_dir_use_symlinks=False,
+                                resume_download=True,
+                                max_workers=1,  # Reduce concurrent downloads
+                            )
 
-                except Exception as e:
-                    logger.warning(f"⚠️ Attempt {attempt + 1} failed: {e}")
+                            try:
+                                model_path = future.result(timeout=self.read_timeout)
+                                logger.info(
+                                    f"✅ Successfully downloaded to: {model_path}"
+                                )
+                                return model_path
+                            except concurrent.futures.TimeoutError:
+                                logger.warning(
+                                    f"⚠️ Download timed out after {self.read_timeout} seconds"
+                                )
+                                # Cancel the future to clean up
+                                future.cancel()
+                                raise TimeoutError("Download timed out")
 
-                    if attempt < self.max_retries - 1:
-                        delay = self.retry_delay_base * (attempt + 1)
-                        logger.info(f"⏳ Waiting {delay} seconds before retry...")
-                        time.sleep(delay)
-                    else:
-                        logger.error(
-                            f"❌ All attempts failed for huggingface_hub download"
-                        )
+                    except (TimeoutError, Exception) as e:
+                        logger.warning(f"⚠️ Attempt {attempt + 1} failed: {e}")
+
+                        if attempt < self.max_retries - 1:
+                            delay = self.retry_delay_base * (attempt + 1)
+                            logger.info(f"⏳ Waiting {delay} seconds before retry...")
+                            time.sleep(delay)
+                        else:
+                            logger.error(
+                                "❌ All attempts failed for huggingface_hub download"
+                            )
+            finally:
+                # Restore original timeout
+                if original_timeout:
+                    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = original_timeout
+                else:
+                    os.environ.pop("HF_HUB_DOWNLOAD_TIMEOUT", None)
 
         except ImportError:
             logger.error(
@@ -172,8 +201,6 @@ class ModelDownloader:
     def download_with_git(self, repo_id: str) -> Optional[str]:
         """Download model using git clone with LFS support."""
         try:
-            import subprocess
-
             model_dir = self.models_dir / repo_id.replace("/", "_")
             model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -292,7 +319,7 @@ class ModelDownloader:
     def download_individual_files(self, repo_id: str) -> Optional[str]:
         """Download model files individually with smaller timeouts."""
         try:
-            from huggingface_hub import hf_hub_download, list_repo_files
+            from huggingface_hub import list_repo_files
 
             model_dir = self.models_dir / repo_id.replace("/", "_")
             model_dir.mkdir(parents=True, exist_ok=True)
@@ -343,6 +370,9 @@ class ModelDownloader:
     ) -> bool:
         """Download a single file with retry logic."""
         try:
+            import concurrent.futures
+            import os
+
             from huggingface_hub import hf_hub_download
 
             file_path = model_dir / filename
@@ -358,25 +388,49 @@ class ModelDownloader:
             else:
                 timeout = 60  # Short timeout for config files
 
-            for attempt in range(2):  # Fewer retries for individual files
-                try:
-                    hf_hub_download(
-                        repo_id=repo_id,
-                        filename=filename,
-                        local_dir=str(model_dir),
-                        local_dir_use_symlinks=False,
-                        resume_download=True,
-                        timeout=timeout,
-                    )
-                    logger.info(f"✅ Downloaded {filename}")
-                    return True
+            # Set environment variable for huggingface_hub timeout
+            original_timeout = os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT")
+            os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = str(timeout)
 
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️ Failed to download {filename} (attempt {attempt + 1}): {e}"
-                    )
-                    if attempt == 0:
-                        time.sleep(10)  # Short delay before retry
+            try:
+                for attempt in range(2):  # Fewer retries for individual files
+                    try:
+                        # Use ThreadPoolExecutor with timeout for cross-platform compatibility
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=1
+                        ) as executor:
+                            future = executor.submit(
+                                hf_hub_download,
+                                repo_id=repo_id,
+                                filename=filename,
+                                local_dir=str(model_dir),
+                                local_dir_use_symlinks=False,
+                                resume_download=True,
+                            )
+
+                            try:
+                                future.result(timeout=timeout)
+                                logger.info(f"✅ Downloaded {filename}")
+                                return True
+                            except concurrent.futures.TimeoutError:
+                                logger.warning(
+                                    f"⚠️ Download of {filename} timed out after {timeout} seconds"
+                                )
+                                future.cancel()
+                                raise TimeoutError(f"Download of {filename} timed out")
+
+                    except (TimeoutError, Exception) as e:
+                        logger.warning(
+                            f"⚠️ Failed to download {filename} (attempt {attempt + 1}): {e}"
+                        )
+                        if attempt == 0:
+                            time.sleep(10)  # Short delay before retry
+            finally:
+                # Restore original timeout
+                if original_timeout:
+                    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = original_timeout
+                else:
+                    os.environ.pop("HF_HUB_DOWNLOAD_TIMEOUT", None)
 
         except Exception as e:
             logger.error(f"❌ Error downloading {filename}: {e}")
@@ -522,12 +576,12 @@ class ModelDownloader:
         print("All automatic download methods failed. Try these manual options:")
         print()
         print("Option 1 - Use git with LFS (recommended):")
-        print(f"  git lfs install")
+        print("  git lfs install")
         print(f"  mkdir -p {target_dir}")
         print(f"  git lfs clone https://huggingface.co/{repo_id} {target_dir}")
         print()
         print("Option 2 - Use huggingface-cli:")
-        print(f"  pip install huggingface_hub[cli]")
+        print("  pip install huggingface_hub[cli]")
         print(f"  huggingface-cli download {repo_id} --local-dir {target_dir}")
         print()
         print("Option 3 - Download from browser:")
