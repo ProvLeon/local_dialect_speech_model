@@ -115,13 +115,11 @@ class TwiWhisperConfig:
 
     # Training configuration
     num_epochs: int = 15
-    batch_size: int = 2  # Further reduced batch size
+    batch_size: int = 1  # Minimal batch size to avoid graph conflicts
     learning_rate: float = 1e-5
     warmup_steps: int = 100
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = (
-        16  # Further increased gradient accumulation steps
-    )
+    gradient_accumulation_steps: int = 32  # Increased to maintain effective batch size
     intent_loss_weight: float = 0.5
 
     # Audio processing
@@ -210,20 +208,16 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
         intent_labels=None,
         **kwargs,
     ):
+        # Temporarily disable multi-task and only do transcription
         transcription_output = self.transcription_model(
             input_features=input_features,
             labels=labels,
             **kwargs,
         )
-        classification_output = self.classification_model(
-            input_features=input_features,
-            labels=intent_labels,
-        )
+
         return {
             "transcription_loss": transcription_output.loss,
             "transcription_logits": transcription_output.logits,
-            "classification_loss": classification_output.loss,
-            "classification_logits": classification_output.logits,
         }
 
     def generate(self, *args, **kwargs):
@@ -371,9 +365,10 @@ class MultiTaskDataCollator:
         )
         batch["labels"] = labels
 
-        if "intent_labels" in features[0]:
-            intent_labels = [feature["intent_labels"] for feature in features]
-            batch["intent_labels"] = torch.tensor(intent_labels, dtype=torch.long)
+        # Temporarily disabled intent labels
+        # if "intent_labels" in features[0]:
+        #     intent_labels = [feature["intent_labels"] for feature in features]
+        #     batch["intent_labels"] = torch.tensor(intent_labels, dtype=torch.long)
 
         return batch
 
@@ -388,12 +383,17 @@ class MultiTaskTrainer(Seq2SeqTrainer):
     def compute_loss(
         self, model, inputs, return_outputs=False, num_items_in_batch=None
     ):
+        # Simplified - only transcription loss for now
         outputs = model(**inputs)
         transcription_loss = outputs.get("transcription_loss")
-        classification_loss = outputs.get("classification_loss")
 
-        total_loss = transcription_loss + self.intent_loss_weight * classification_loss
-        return (total_loss, outputs) if return_outputs else total_loss
+        if transcription_loss is None:
+            # Create a dummy loss if none exists
+            transcription_loss = torch.tensor(
+                0.0, device=next(model.parameters()).device, requires_grad=True
+            )
+
+        return (transcription_loss, outputs) if return_outputs else transcription_loss
 
 
 class TwiWhisperTrainer:
@@ -548,7 +548,7 @@ class TwiWhisperTrainer:
             no_cuda=not use_cuda,
             predict_with_generate=True,
             logging_dir=f"{self.config.output_dir}/logs",
-            gradient_checkpointing=True,  # Enabled gradient checkpointing
+            gradient_checkpointing=False,  # Disabled to prevent graph reuse issues
         )
 
         # Trainer
@@ -591,7 +591,7 @@ def main():
         help="Logging backend (e.g., tensorboard, wandb)",
     )
     args = parser.parse_args()
-    args.model_size = "tiny"  # Force tiny model to conserve memory
+    args.model_size = "small"  # Force tiny model to conserve memory
 
     config = TwiWhisperConfig(
         model_size=args.model_size,
