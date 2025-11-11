@@ -612,7 +612,7 @@ class TwiWhisperManager:
             label_names=["labels"],
             logging_dir=f"{self.config.output_dir}/logs",
             gradient_checkpointing=False,
-            include_inputs_for_metrics=True,
+            include_for_metrics=True,
         )
 
         # Create data collator
