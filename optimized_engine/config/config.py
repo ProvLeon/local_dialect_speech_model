@@ -13,12 +13,12 @@ Date: 2025-11-05
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
-MODELS_DIR = BASE_DIR / "models"
+MODELS_DIR = BASE_DIR / "models/huggingface"
 LOGS_DIR = BASE_DIR / "logs"
 
 # Ensure directories exist
@@ -31,9 +31,9 @@ class OptimizedConfig:
 
     # ==================== WHISPER CONFIGURATION ====================
     WHISPER = {
-        "model_size": "large-v3",  # Options: tiny, base, small, medium, large, large-v2, large-v3, custom
+        "model_size": "small",  # Options: tiny, base, small, medium, large, large-v2, large-v3, custom
         "custom_model_path": str(
-            MODELS_DIR / "whisper_twi"
+            MODELS_DIR / "TwiWhisperModel_TwiWhisperModel"
         ),  # Path to fine-tuned Whisper model
         "language": None,  # Auto-detect language (Whisper doesn't officially support 'tw')
         "task": "transcribe",  # Always transcribe (not translate)
