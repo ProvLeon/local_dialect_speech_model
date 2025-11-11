@@ -22,7 +22,6 @@ import random
 import re
 import shutil
 import sys
-import torchaudio
 import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -30,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import torchaudio
 
 # Fix for numpy.dtypes error when using older numpy with newer jax/transformers
 # This can happen in environments like Kaggle.
@@ -253,16 +253,22 @@ class TwiAudioDataset(Dataset):
         self.config = config
         self.label_to_id = label_to_id
         self.is_train = is_train
-        self.waveform_augmentations = self._get_waveform_augmentations() if is_train else None
-        self.spectrogram_augmentations = self._get_spectrogram_augmentations() if is_train else None
+        self.waveform_augmentations = (
+            self._get_waveform_augmentations() if is_train else None
+        )
+        self.spectrogram_augmentations = (
+            self._get_spectrogram_augmentations() if is_train else None
+        )
         self._filter_valid_samples()
 
     def _get_waveform_augmentations(self):
-        return A.Compose([
-            A.AddGaussianNoise(min_amplitude=0.001, max_amplitude=0.015, p=0.5),
-            A.TimeStretch(min_rate=0.8, max_rate=1.25, p=0.5),
-            A.PitchShift(min_semitones=-4, max_semitones=4, p=0.5),
-        ])
+        return A.Compose(
+            [
+                A.AddGaussianNoise(min_amplitude=0.001, max_amplitude=0.015, p=0.5),
+                A.TimeStretch(min_rate=0.8, max_rate=1.25, p=0.5),
+                A.PitchShift(min_semitones=-4, max_semitones=4, p=0.5),
+            ]
+        )
 
     def _get_spectrogram_augmentations(self):
         return nn.Sequential(
@@ -320,7 +326,7 @@ class TwiAudioDataset(Dataset):
             input_features = self.processor(
                 audio, sampling_rate=self.config.sample_rate
             ).input_features[0]
-            
+
             input_features = torch.from_numpy(input_features)
 
             if self.is_train and self.spectrogram_augmentations:
@@ -328,7 +334,7 @@ class TwiAudioDataset(Dataset):
 
         except Exception as e:
             logger.error(f"Error processing audio {audio_path}: {e}")
-            input_features = torch.zeros((80, 3000)) # Fallback spectrogram
+            input_features = torch.zeros((80, 3000))  # Fallback spectrogram
 
         labels = self.processor.tokenizer(transcription).input_ids
         intent_label = self.label_to_id.get(intent, -1)
@@ -527,7 +533,7 @@ class TwiWhisperTrainer:
             learning_rate=self.config.learning_rate,
             warmup_steps=self.config.warmup_steps,
             num_train_epochs=self.config.num_epochs,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             eval_steps=self.config.eval_steps,
             save_strategy="steps",
             save_steps=self.config.save_steps,
