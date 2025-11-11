@@ -77,17 +77,54 @@ class ModelDownloader:
         return session
 
     def check_existing_model(self, repo_id: str) -> Optional[str]:
-        """Check if model already exists locally."""
+        """Check if model already exists locally with comprehensive file verification."""
         model_dir = self.models_dir / repo_id.replace("/", "_")
 
-        if model_dir.exists():
-            # Check for essential files
-            essential_files = ["config.json"]
-            if all((model_dir / f).exists() for f in essential_files):
-                logger.info(f"✅ Model already exists: {model_dir}")
-                return str(model_dir)
+        if not model_dir.exists():
+            return None
 
-        return None
+        # Check for essential configuration files
+        essential_config_files = ["config.json", "tokenizer_config.json", "vocab.json"]
+
+        # Check for model weight files (at least one must exist)
+        model_weight_files = [
+            "pytorch_model.bin",
+            "model.safetensors",
+            "pytorch_model.safetensors",
+            "model.bin",
+        ]
+
+        # Verify config files exist
+        missing_config = [
+            f for f in essential_config_files if not (model_dir / f).exists()
+        ]
+        if missing_config:
+            logger.warning(f"⚠️ Missing config files: {missing_config}")
+            return None
+
+        # Verify at least one model weight file exists and has reasonable size
+        weight_file_found = False
+        for weight_file in model_weight_files:
+            weight_path = model_dir / weight_file
+            if weight_path.exists():
+                # Check if file has reasonable size (> 1MB for model weights)
+                if weight_path.stat().st_size > 1024 * 1024:
+                    weight_file_found = True
+                    logger.info(
+                        f"✅ Found model weights: {weight_file} ({weight_path.stat().st_size / (1024 * 1024):.1f} MB)"
+                    )
+                    break
+                else:
+                    logger.warning(
+                        f"⚠️ Weight file {weight_file} too small ({weight_path.stat().st_size} bytes)"
+                    )
+
+        if not weight_file_found:
+            logger.warning(f"⚠️ No valid model weight files found in {model_dir}")
+            return None
+
+        logger.info(f"✅ Complete model verified: {model_dir}")
+        return str(model_dir)
 
     def download_with_huggingface_hub(self, repo_id: str) -> Optional[str]:
         """Download model using huggingface_hub with enhanced settings."""
@@ -133,16 +170,72 @@ class ModelDownloader:
         return None
 
     def download_with_git(self, repo_id: str) -> Optional[str]:
-        """Download model using git clone as fallback."""
+        """Download model using git clone with LFS support."""
         try:
             import subprocess
 
             model_dir = self.models_dir / repo_id.replace("/", "_")
             model_dir.mkdir(parents=True, exist_ok=True)
 
-            logger.info(f"🔄 Attempting git clone for {repo_id}...")
+            logger.info(f"🔄 Attempting git clone with LFS for {repo_id}...")
 
-            # Use git clone with depth=1 for faster download
+            # Check if git-lfs is available
+            try:
+                lfs_check = subprocess.run(
+                    ["git", "lfs", "version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if lfs_check.returncode != 0:
+                    logger.warning(
+                        "⚠️ Git LFS not available, large files may not download"
+                    )
+                else:
+                    logger.info("✅ Git LFS available")
+            except Exception:
+                logger.warning("⚠️ Could not check Git LFS availability")
+
+            # Configure git for large files and LFS
+            git_env = os.environ.copy()
+            git_env.update(
+                {
+                    "GIT_LFS_SKIP_SMUDGE": "0",  # Ensure LFS files are downloaded
+                    "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+                    "GIT_HTTP_LOW_SPEED_TIME": "600",
+                }
+            )
+
+            # First attempt: git lfs clone (if available)
+            try:
+                logger.info("🔄 Trying git lfs clone...")
+                result = subprocess.run(
+                    [
+                        "git",
+                        "lfs",
+                        "clone",
+                        "--depth=1",
+                        f"https://huggingface.co/{repo_id}",
+                        str(model_dir),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=1800,
+                    env=git_env,
+                )
+
+                if result.returncode == 0:
+                    logger.info(f"✅ Git LFS clone successful: {model_dir}")
+                    return str(model_dir)
+                else:
+                    logger.warning(f"⚠️ Git LFS clone failed: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"⚠️ Git LFS clone error: {e}")
+
+            # Fallback: regular clone + LFS pull
+            logger.info("🔄 Trying regular git clone + LFS pull...")
+
+            # Step 1: Regular clone
             result = subprocess.run(
                 [
                     "git",
@@ -153,21 +246,44 @@ class ModelDownloader:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=1800,
-            )  # 30 minute timeout
+                timeout=900,  # 15 minutes for clone
+                env=git_env,
+            )
 
-            if result.returncode == 0:
-                logger.info(f"✅ Git clone successful: {model_dir}")
-                return str(model_dir)
-            else:
+            if result.returncode != 0:
                 logger.error(f"❌ Git clone failed: {result.stderr}")
+                return None
+
+            # Step 2: Pull LFS files
+            try:
+                logger.info("🔄 Pulling LFS files...")
+                lfs_result = subprocess.run(
+                    ["git", "lfs", "pull"],
+                    cwd=str(model_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=1800,  # 30 minutes for LFS files
+                    env=git_env,
+                )
+
+                if lfs_result.returncode == 0:
+                    logger.info("✅ LFS files downloaded successfully")
+                else:
+                    logger.warning(f"⚠️ LFS pull had issues: {lfs_result.stderr}")
+                    # Continue anyway, some files might have downloaded
+
+            except Exception as e:
+                logger.warning(f"⚠️ LFS pull error: {e}")
+
+            logger.info(f"✅ Git clone completed: {model_dir}")
+            return str(model_dir)
 
         except FileNotFoundError:
             logger.error(
                 "❌ Git not found. Please install git or use huggingface_hub method"
             )
         except subprocess.TimeoutExpired:
-            logger.error("❌ Git clone timed out after 30 minutes")
+            logger.error("❌ Git clone timed out")
         except Exception as e:
             logger.error(f"❌ Git clone error: {e}")
 
@@ -268,24 +384,86 @@ class ModelDownloader:
         return False
 
     def verify_model(self, model_path: str) -> bool:
-        """Verify that the downloaded model is complete."""
+        """Verify that the downloaded model is complete with comprehensive checks."""
         model_dir = Path(model_path)
 
-        # Check for essential files
-        essential_files = ["config.json"]
-        missing_files = []
+        # Check for essential configuration files
+        essential_config_files = ["config.json", "tokenizer_config.json", "vocab.json"]
 
-        for filename in essential_files:
-            if not (model_dir / filename).exists():
-                missing_files.append(filename)
+        # Check for model weight files (at least one must exist)
+        model_weight_files = [
+            "pytorch_model.bin",
+            "model.safetensors",
+            "pytorch_model.safetensors",
+            "model.bin",
+        ]
 
-        if missing_files:
+        # Optional but recommended files
+        recommended_files = [
+            "generation_config.json",
+            "merges.txt",
+            "normalizer.json",
+            "added_tokens.json",
+            "special_tokens_map.json",
+            "preprocessor_config.json",
+        ]
+
+        # Verify essential config files
+        missing_config_files = []
+        for filename in essential_config_files:
+            file_path = model_dir / filename
+            if not file_path.exists():
+                missing_config_files.append(filename)
+            elif file_path.stat().st_size == 0:
+                missing_config_files.append(f"{filename} (empty)")
+
+        if missing_config_files:
             logger.error(
-                f"❌ Model verification failed. Missing files: {missing_files}"
+                f"❌ Model verification failed. Missing config files: {missing_config_files}"
             )
             return False
 
-        # Try to load config
+        # Verify model weight files
+        weight_file_found = False
+        total_weight_size = 0
+
+        for weight_file in model_weight_files:
+            weight_path = model_dir / weight_file
+            if weight_path.exists():
+                file_size = weight_path.stat().st_size
+                if file_size > 1024 * 1024:  # Must be > 1MB
+                    weight_file_found = True
+                    total_weight_size += file_size
+                    logger.info(
+                        f"✅ Model weights: {weight_file} ({file_size / (1024 * 1024):.1f} MB)"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ Weight file {weight_file} too small: {file_size} bytes"
+                    )
+
+        if not weight_file_found:
+            logger.error(
+                "❌ Model verification failed. No valid model weight files found!"
+            )
+            logger.error(
+                "   This usually means Git LFS files weren't downloaded properly."
+            )
+            return False
+
+        logger.info(f"✅ Total model size: {total_weight_size / (1024 * 1024):.1f} MB")
+
+        # Check recommended files
+        missing_recommended = []
+        for filename in recommended_files:
+            if not (model_dir / filename).exists():
+                missing_recommended.append(filename)
+
+        if missing_recommended:
+            logger.warning(f"⚠️ Missing recommended files: {missing_recommended}")
+            logger.warning("   Model may still work but some features might be limited")
+
+        # Try to load and validate config
         try:
             with open(model_dir / "config.json", "r") as f:
                 config = json.load(f)
@@ -343,9 +521,10 @@ class ModelDownloader:
         print("=" * 70)
         print("All automatic download methods failed. Try these manual options:")
         print()
-        print("Option 1 - Use git (if available):")
+        print("Option 1 - Use git with LFS (recommended):")
+        print(f"  git lfs install")
         print(f"  mkdir -p {target_dir}")
-        print(f"  git clone https://huggingface.co/{repo_id} {target_dir}")
+        print(f"  git lfs clone https://huggingface.co/{repo_id} {target_dir}")
         print()
         print("Option 2 - Use huggingface-cli:")
         print(f"  pip install huggingface_hub[cli]")
@@ -353,9 +532,15 @@ class ModelDownloader:
         print()
         print("Option 3 - Download from browser:")
         print(f"  1. Visit: https://huggingface.co/{repo_id}")
-        print(f"  2. Download files manually to: {target_dir}")
+        print(f"  2. Download ALL files (especially .bin files) to: {target_dir}")
         print()
-        print("Option 4 - Use a smaller model:")
+        print("Option 4 - Use wget for individual files:")
+        print(f"  mkdir -p {target_dir} && cd {target_dir}")
+        print(f"  wget https://huggingface.co/{repo_id}/resolve/main/pytorch_model.bin")
+        print(f"  wget https://huggingface.co/{repo_id}/resolve/main/config.json")
+        print("  # Download other required files similarly")
+        print()
+        print("Option 5 - Use a smaller model:")
         print("  Try: openai/whisper-small or openai/whisper-base")
         print("=" * 70)
 
