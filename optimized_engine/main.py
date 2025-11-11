@@ -132,7 +132,6 @@ class OptimizedEngineManager:
                         ),
                         local_dir_use_symlinks=False,
                         resume_download=True,  # Enable resume for interrupted downloads
-                        timeout=300,  # 5 minute timeout
                     )
 
                     logger.info(
@@ -213,7 +212,6 @@ class OptimizedEngineManager:
                         filename=filename,
                         local_dir=str(model_local_dir),
                         local_dir_use_symlinks=False,
-                        timeout=60,  # Shorter timeout for small files
                     )
                 except Exception as e:
                     logger.warning(f"⚠️ Could not download {filename}: {e}")
@@ -229,7 +227,6 @@ class OptimizedEngineManager:
                     local_dir=str(model_local_dir),
                     local_dir_use_symlinks=False,
                     resume_download=True,
-                    timeout=600,  # 10 minute timeout for large file
                 )
                 logger.info("✅ Model weights downloaded successfully")
             except Exception as e:
