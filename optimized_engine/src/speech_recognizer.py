@@ -49,6 +49,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 from config.config import OptimizedConfig
 
 # Import HuggingFace adapter
+logger = logging.getLogger(__name__)
+
 try:
     from src.huggingface_model_adapter import create_huggingface_adapter
 
@@ -56,8 +58,6 @@ try:
 except ImportError:
     HUGGINGFACE_AVAILABLE = False
     logger.warning("⚠️ HuggingFace model adapter not available")
-
-logger = logging.getLogger(__name__)
 
 
 class AudioProcessor:
