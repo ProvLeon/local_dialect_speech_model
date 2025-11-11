@@ -20,6 +20,7 @@ Date: 2025-11-05
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -79,8 +80,15 @@ class OptimizedEngineManager:
             # Check if model already exists
             existing_model = self._check_existing_model(models_dir)
             if existing_model:
+                logger.info(f"📁 Found existing model at: {existing_model}")
                 os.environ["HUGGINGFACE_MODEL_PATH"] = existing_model
                 self._detect_and_set_model_type(existing_model)
+                logger.info(
+                    f"🔧 Set HUGGINGFACE_MODEL_PATH={os.environ.get('HUGGINGFACE_MODEL_PATH')}"
+                )
+                logger.info(
+                    f"🔧 Set HUGGINGFACE_MODEL_TYPE={os.environ.get('HUGGINGFACE_MODEL_TYPE')}"
+                )
                 return True
             import json
             import time
@@ -273,14 +281,32 @@ class OptimizedEngineManager:
 
     def _check_existing_model(self, models_dir):
         """Check if the model already exists locally."""
+        if not self.huggingface_repo:
+            logger.warning("⚠️ No huggingface_repo specified")
+            return None
+
         model_local_dir = models_dir / self.huggingface_repo.replace("/", "_")
+        logger.info(f"🔍 Checking for model at: {model_local_dir}")
 
         if model_local_dir.exists():
+            logger.info(f"📁 Directory exists: {model_local_dir}")
             # Check if essential files exist
             essential_files = ["config.json"]
-            if all((model_local_dir / f).exists() for f in essential_files):
-                logger.info(f"✅ Found existing model at: {model_local_dir}")
+            missing_files = []
+            for f in essential_files:
+                file_path = model_local_dir / f
+                if not file_path.exists():
+                    missing_files.append(f)
+                else:
+                    logger.info(f"✅ Found essential file: {file_path}")
+
+            if not missing_files:
+                logger.info(f"✅ Complete model found at: {model_local_dir}")
                 return str(model_local_dir)
+            else:
+                logger.warning(f"⚠️ Missing essential files: {missing_files}")
+        else:
+            logger.warning(f"⚠️ Model directory does not exist: {model_local_dir}")
 
         return None
 
@@ -340,6 +366,14 @@ class OptimizedEngineManager:
     def start_server(self, host="0.0.0.0", port=8000, reload=False):
         """Start the optimized FastAPI server with HuggingFace model support."""
         logger.info(f"🚀 Starting server on {host}:{port}")
+
+        # Log current HuggingFace settings
+        if self.huggingface_repo:
+            logger.info(f"🤗 HuggingFace repository: {self.huggingface_repo}")
+        else:
+            logger.info(
+                "📝 No HuggingFace repository specified, using default Whisper model"
+            )
 
         # Download and setup HuggingFace model if specified
         if self.huggingface_repo and not self.download_huggingface_model():

@@ -55,14 +55,7 @@ try:
     HUGGINGFACE_AVAILABLE = True
 except ImportError:
     HUGGINGFACE_AVAILABLE = False
-
-# Import HuggingFace adapter
-try:
-    from src.huggingface_model_adapter import create_huggingface_adapter
-
-    HUGGINGFACE_AVAILABLE = True
-except ImportError:
-    HUGGINGFACE_AVAILABLE = False
+    logger.warning("⚠️ HuggingFace model adapter not available")
 
 logger = logging.getLogger(__name__)
 
@@ -544,8 +537,10 @@ class OptimizedSpeechRecognizer:
 
         # Check if HuggingFace model should be used
         if self._should_use_huggingface():
+            logger.info("🤗 Initializing with HuggingFace model")
             self._initialize_huggingface_model()
         else:
+            logger.info("📝 Initializing with standard Whisper model")
             # Initialize standard components
             self.audio_processor = AudioProcessor(self.config)
             self.transcriber = WhisperTranscriber(self.config)
@@ -555,11 +550,19 @@ class OptimizedSpeechRecognizer:
 
     def _should_use_huggingface(self) -> bool:
         """Check if HuggingFace model should be used."""
-        return (
-            HUGGINGFACE_AVAILABLE
-            and os.environ.get("HUGGINGFACE_MODEL_PATH")
-            and Path(os.environ.get("HUGGINGFACE_MODEL_PATH")).exists()
-        )
+        hf_available = HUGGINGFACE_AVAILABLE
+        model_path_env = os.environ.get("HUGGINGFACE_MODEL_PATH")
+        path_exists = Path(model_path_env).exists() if model_path_env else False
+
+        logger.info(f"🔍 HuggingFace availability check:")
+        logger.info(f"  - HUGGINGFACE_AVAILABLE: {hf_available}")
+        logger.info(f"  - HUGGINGFACE_MODEL_PATH: {model_path_env}")
+        logger.info(f"  - Path exists: {path_exists}")
+
+        should_use = hf_available and model_path_env and path_exists
+        logger.info(f"  - Should use HuggingFace: {should_use}")
+
+        return should_use
 
     def _initialize_huggingface_model(self):
         """Initialize HuggingFace model adapter."""
