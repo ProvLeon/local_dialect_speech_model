@@ -550,9 +550,9 @@ class TwiWhisperTrainer:
             learning_rate=self.config.learning_rate,
             warmup_steps=self.config.warmup_steps,
             num_train_epochs=self.config.num_epochs,
-            # eval_strategy="steps",
+            eval_strategy="steps",
             eval_steps=self.config.eval_steps,  # Disabled evaluation temporarily
-            save_strategy="epoch",
+            save_strategy="steps",
             save_steps=self.config.save_steps,  # Changed to save per epoch
             logging_steps=self.config.logging_steps,
             report_to=self.config.report_to,
