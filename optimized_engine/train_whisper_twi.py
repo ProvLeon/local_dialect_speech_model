@@ -115,11 +115,11 @@ class TwiWhisperConfig:
 
     # Training configuration
     num_epochs: int = 15
-    batch_size: int = 1  # Minimal batch size to avoid graph conflicts
+    batch_size: int = 8  # Proper batch size for learning
     learning_rate: float = 1e-5
-    warmup_steps: int = 100
+    warmup_steps: int = 500
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 32  # Increased to maintain effective batch size
+    gradient_accumulation_steps: int = 4  # Proper gradient accumulation
     intent_loss_weight: float = 0.5
 
     # Audio processing
@@ -128,9 +128,9 @@ class TwiWhisperConfig:
     min_audio_length: float = 0.5
 
     # Validation
-    per_device_eval_batch_size: int = 2
-    eval_steps: int = 10
-    save_steps: int = 10
+    per_device_eval_batch_size: int = 8
+    eval_steps: int = 50
+    save_steps: int = 50
     eval_ratio: float = 0.1
     test_ratio: float = 0.1
 
@@ -193,50 +193,48 @@ class WhisperForSpeechClassification(WhisperPreTrainedModel):
         )
 
 
-class WhisperForMultiTask(WhisperPreTrainedModel):
-    """A multi-task model combining transcription and classification."""
+class WhisperForConditionalGenerationTwi(WhisperForConditionalGeneration):
+    """Whisper model fine-tuned for Twi transcription."""
 
     def __init__(self, config):
         super().__init__(config)
-        self.transcription_model = WhisperForConditionalGeneration(config)
-        self.classification_model = WhisperForSpeechClassification(config)
-
-        # Initialize generation_config to prevent evaluation errors
-        from transformers import GenerationConfig
-
-        if not hasattr(self, "generation_config") or self.generation_config is None:
-            self.generation_config = GenerationConfig.from_model_config(config)
-            self.generation_config.forced_decoder_ids = None
-            self.generation_config.suppress_tokens = []
-            self.generation_config.max_length = 448
-            self.generation_config.use_cache = True
 
     def forward(
         self,
-        input_features,
+        input_features=None,
+        attention_mask=None,
+        decoder_input_ids=None,
+        decoder_attention_mask=None,
+        head_mask=None,
+        decoder_head_mask=None,
+        cross_attn_head_mask=None,
+        encoder_outputs=None,
+        past_key_values=None,
+        decoder_inputs_embeds=None,
         labels=None,
-        intent_labels=None,
+        use_cache=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
         **kwargs,
     ):
-        # Temporarily disable multi-task and only do transcription
-        transcription_output = self.transcription_model(
+        return super().forward(
             input_features=input_features,
+            attention_mask=attention_mask,
+            decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
+            head_mask=head_mask,
+            decoder_head_mask=decoder_head_mask,
+            cross_attn_head_mask=cross_attn_head_mask,
+            encoder_outputs=encoder_outputs,
+            past_key_values=past_key_values,
+            decoder_inputs_embeds=decoder_inputs_embeds,
             labels=labels,
-            **kwargs,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
         )
-
-        # Return outputs in the format expected by Seq2SeqTrainer
-        return {
-            "loss": transcription_output.loss,
-            "logits": transcription_output.logits,
-            "past_key_values": getattr(transcription_output, "past_key_values", None),
-        }
-
-    def generate(self, *args, **kwargs):
-        """Generate transcriptions using the transcription model."""
-        # Remove intent_labels from kwargs if present, as it's not used by the generate method
-        kwargs.pop("intent_labels", None)
-        return self.transcription_model.generate(*args, **kwargs)
 
 
 class TwiAudioDataset(Dataset):
@@ -321,41 +319,42 @@ class TwiAudioDataset(Dataset):
     def __getitem__(self, idx):
         audio_path = self.audio_paths[idx]
         transcription = self.transcriptions[idx]
-        intent = self.intents[idx]
 
         try:
+            # Load audio
             audio, sr = librosa.load(audio_path, sr=self.config.sample_rate)
 
+            # Apply waveform augmentations if training
             if self.is_train and self.waveform_augmentations:
                 audio = self.waveform_augmentations(samples=audio, sample_rate=sr)
 
+            # Extract features
             input_features = self.processor(
-                audio, sampling_rate=self.config.sample_rate
+                audio, sampling_rate=self.config.sample_rate, return_tensors="pt"
             ).input_features[0]
 
-            input_features = torch.from_numpy(input_features)
-
+            # Apply spectrogram augmentations if training
             if self.is_train and self.spectrogram_augmentations:
                 input_features = self.spectrogram_augmentations(input_features)
 
         except Exception as e:
             logger.error(f"Error processing audio {audio_path}: {e}")
-            input_features = torch.zeros((80, 3000))  # Fallback spectrogram
+            # Create fallback features with correct dimensions
+            input_features = torch.zeros((80, 3000))
 
-        labels = self.processor.tokenizer(transcription).input_ids
-        intent_label = self.label_to_id.get(intent, -1)
-        if intent_label == -1:
-            logger.warning(f"Intent '{intent}' not found in label_to_id. Assigning -1.")
+        # Tokenize transcription
+        labels = self.processor.tokenizer(
+            transcription, add_special_tokens=False, return_tensors="pt"
+        ).input_ids.flatten()
 
         return {
             "input_features": input_features,
             "labels": labels,
-            "intent_labels": intent_label,
         }
 
 
-class MultiTaskDataCollator:
-    """Data collator for multi-task training."""
+class TwiWhisperDataCollator:
+    """Data collator for Whisper fine-tuning on Twi."""
 
     def __init__(self, processor: WhisperProcessor):
         self.processor = processor
@@ -363,6 +362,7 @@ class MultiTaskDataCollator:
     def __call__(
         self, features: List[Dict[str, Union[List[int], torch.Tensor]]]
     ) -> Dict[str, torch.Tensor]:
+        # Pad input features
         input_features = [
             {"input_features": feature["input_features"]} for feature in features
         ]
@@ -370,47 +370,32 @@ class MultiTaskDataCollator:
             input_features, return_tensors="pt"
         )
 
+        # Pad labels
         label_features = [{"input_ids": feature["labels"]} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+
+        # Replace padding token id's of the labels by -100 so it's ignored by the loss
         labels = labels_batch["input_ids"].masked_fill(
             labels_batch.attention_mask.ne(1), -100
         )
+
+        # If bos token is appended in previous tokenization step,
+        # cut bos token here as it's append later anyways
+        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
+            labels = labels[:, 1:]
+
         batch["labels"] = labels
-
-        # Temporarily disabled intent labels
-        # if "intent_labels" in features[0]:
-        #     intent_labels = [feature["intent_labels"] for feature in features]
-        #     batch["intent_labels"] = torch.tensor(intent_labels, dtype=torch.long)
-
         return batch
 
 
-class MultiTaskTrainer(Seq2SeqTrainer):
-    """A Seq2SeqTrainer for multi-task learning."""
+class TwiWhisperTrainer(Seq2SeqTrainer):
+    """Custom Seq2SeqTrainer for Twi Whisper fine-tuning."""
 
-    def __init__(self, *args, intent_loss_weight=0.5, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.intent_loss_weight = intent_loss_weight
-
-    def compute_loss(
-        self, model, inputs, return_outputs=False, num_items_in_batch=None
-    ):
-        # Get model outputs
-        outputs = model(**inputs)
-
-        # Extract loss - it should be directly available now
-        loss = outputs.get("loss")
-
-        if loss is None:
-            # Create a dummy loss if none exists
-            loss = torch.tensor(
-                0.0, device=next(model.parameters()).device, requires_grad=True
-            )
-
-        return (loss, outputs) if return_outputs else loss
 
 
-class TwiWhisperTrainer:
+class TwiWhisperManager:
     """Trainer for the multi-task Whisper model."""
 
     def __init__(self, config: TwiWhisperConfig):
@@ -468,50 +453,41 @@ class TwiWhisperTrainer:
         train_dataset = TwiAudioDataset(
             [d["audio_path"] for d in train_data],
             [d["transcription"] for d in train_data],
-            [d["intent"] for d in train_data],
+            [None] * len(train_data),  # No intents for now
             self.processor,
             self.config,
-            self.config.label_to_id,
+            {},  # No label mapping needed
             is_train=True,
         )
         eval_dataset = TwiAudioDataset(
             [d["audio_path"] for d in eval_data],
             [d["transcription"] for d in eval_data],
-            [d["intent"] for d in eval_data],
+            [None] * len(eval_data),  # No intents for now
             self.processor,
             self.config,
-            self.config.label_to_id,
+            {},  # No label mapping needed
             is_train=False,
         )
         return train_dataset, eval_dataset
 
     def compute_metrics(self, eval_pred):
-        predictions = eval_pred.predictions
-        labels = eval_pred.label_ids
+        pred_ids = eval_pred.predictions
+        label_ids = eval_pred.label_ids
 
-        # Handle case where we only have transcription predictions (not multi-task)
-        if isinstance(predictions, tuple):
-            transcription_logits = predictions[0]
-        else:
-            transcription_logits = predictions
+        # Replace -100s used for padding as we can't decode them
+        label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
 
-        if isinstance(labels, tuple):
-            transcription_labels = labels[0]
-        else:
-            transcription_labels = labels
+        # We do not want to group tokens when computing the metrics
+        pred_str = self.processor.tokenizer.batch_decode(
+            pred_ids, skip_special_tokens=True
+        )
+        label_str = self.processor.tokenizer.batch_decode(
+            label_ids, skip_special_tokens=True
+        )
 
-        # Transcription metrics
-        transcription_labels[transcription_labels == -100] = (
-            self.processor.tokenizer.pad_token_id
-        )
-        decoded_preds = self.processor.tokenizer.batch_decode(
-            transcription_logits, skip_special_tokens=True
-        )
-        decoded_labels = self.processor.tokenizer.batch_decode(
-            transcription_labels, skip_special_tokens=True
-        )
-        wer_score = wer(decoded_labels, decoded_preds)
-        cer_score = cer(decoded_labels, decoded_preds)
+        # Compute WER and CER
+        wer_score = wer(label_str, pred_str)
+        cer_score = cer(label_str, pred_str)
 
         return {"wer": wer_score, "cer": cer_score}
 
@@ -541,23 +517,15 @@ class TwiWhisperTrainer:
         # Explicitly set num_labels for the classification head
         whisper_config.num_labels = self.config.num_intent_labels
 
-        model = WhisperForMultiTask.from_pretrained(
-            self.config.model_name,
-            config=whisper_config,
-            ignore_mismatched_sizes=True,
+        # Load the pretrained Whisper model
+        model = WhisperForConditionalGenerationTwi.from_pretrained(
+            self.config.model_name, config=whisper_config
         )
+
+        # Configure the model for fine-tuning
         model.config.forced_decoder_ids = None
         model.config.suppress_tokens = []
-
-        # Set up generation config to fix evaluation error
-        from transformers import GenerationConfig
-
-        if not hasattr(model, "generation_config") or model.generation_config is None:
-            model.generation_config = GenerationConfig.from_model_config(model.config)
-        model.generation_config.forced_decoder_ids = None
-        model.generation_config.suppress_tokens = []
-        model.generation_config.max_length = 448
-        model.generation_config.use_cache = True
+        model.config.use_cache = False  # Disable cache for training
 
         # Training arguments
         training_args = Seq2SeqTrainingArguments(
@@ -578,22 +546,28 @@ class TwiWhisperTrainer:
             metric_for_best_model="wer",
             greater_is_better=False,
             fp16=use_cuda,
-            no_cuda=not use_cuda,
+            dataloader_drop_last=False,
             predict_with_generate=True,
+            generation_max_length=225,
+            generation_num_beams=1,
+            remove_unused_columns=False,
+            label_names=["labels"],
             logging_dir=f"{self.config.output_dir}/logs",
-            gradient_checkpointing=False,  # Disabled to prevent graph reuse issues
+            gradient_checkpointing=False,
         )
 
-        # Trainer
-        trainer = MultiTaskTrainer(
+        # Create data collator
+        data_collator = TwiWhisperDataCollator(self.processor)
+
+        # Create trainer
+        trainer = TwiWhisperTrainer(
             model=model,
             args=training_args,
-            data_collator=data_collator,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             tokenizer=self.processor.feature_extractor,
+            data_collator=data_collator,
             compute_metrics=self.compute_metrics,
-            intent_loss_weight=self.config.intent_loss_weight,
         )
 
         # Train
@@ -635,7 +609,7 @@ def main():
         report_to=args.report_to,
     )
 
-    trainer = TwiWhisperTrainer(config)
+    trainer = TwiWhisperManager(config)
     trainer.train()
 
 
