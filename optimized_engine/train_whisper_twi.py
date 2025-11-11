@@ -526,10 +526,10 @@ class TwiWhisperManager:
         # Replace -100s used for padding as we can't decode them
         label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
 
-        if isinstance(labels, tuple):
-            transcription_labels = labels[0]
+        if isinstance(label_ids, tuple):
+            transcription_labels = label_ids[0]
         else:
-            transcription_labels = labels
+            transcription_labels = label_ids
 
         # Transcription metrics
         transcription_labels[transcription_labels == -100] = (
