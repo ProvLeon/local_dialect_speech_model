@@ -208,6 +208,8 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
             self.generation_config = GenerationConfig.from_model_config(config)
             self.generation_config.forced_decoder_ids = None
             self.generation_config.suppress_tokens = []
+            self.generation_config.max_length = 448
+            self.generation_config.use_cache = True
 
     def forward(
         self,
@@ -223,9 +225,11 @@ class WhisperForMultiTask(WhisperPreTrainedModel):
             **kwargs,
         )
 
+        # Return outputs in the format expected by Seq2SeqTrainer
         return {
-            "transcription_loss": transcription_output.loss,
-            "transcription_logits": transcription_output.logits,
+            "loss": transcription_output.loss,
+            "logits": transcription_output.logits,
+            "past_key_values": getattr(transcription_output, "past_key_values", None),
         }
 
     def generate(self, *args, **kwargs):
@@ -391,17 +395,19 @@ class MultiTaskTrainer(Seq2SeqTrainer):
     def compute_loss(
         self, model, inputs, return_outputs=False, num_items_in_batch=None
     ):
-        # Simplified - only transcription loss for now
+        # Get model outputs
         outputs = model(**inputs)
-        transcription_loss = outputs.get("transcription_loss")
 
-        if transcription_loss is None:
+        # Extract loss - it should be directly available now
+        loss = outputs.get("loss")
+
+        if loss is None:
             # Create a dummy loss if none exists
-            transcription_loss = torch.tensor(
+            loss = torch.tensor(
                 0.0, device=next(model.parameters()).device, requires_grad=True
             )
 
-        return (transcription_loss, outputs) if return_outputs else transcription_loss
+        return (loss, outputs) if return_outputs else loss
 
 
 class TwiWhisperTrainer:
@@ -480,25 +486,34 @@ class TwiWhisperTrainer:
         return train_dataset, eval_dataset
 
     def compute_metrics(self, eval_pred):
-        transcription_logits, intent_logits = eval_pred.predictions
-        transcription_labels, intent_labels = eval_pred.label_ids
+        predictions = eval_pred.predictions
+        labels = eval_pred.label_ids
+
+        # Handle case where we only have transcription predictions (not multi-task)
+        if isinstance(predictions, tuple):
+            transcription_logits = predictions[0]
+        else:
+            transcription_logits = predictions
+
+        if isinstance(labels, tuple):
+            transcription_labels = labels[0]
+        else:
+            transcription_labels = labels
 
         # Transcription metrics
-        transcription_labels[transcription_labels == -100] = self.tokenizer.pad_token_id
-        decoded_preds = self.tokenizer.batch_decode(
+        transcription_labels[transcription_labels == -100] = (
+            self.processor.tokenizer.pad_token_id
+        )
+        decoded_preds = self.processor.tokenizer.batch_decode(
             transcription_logits, skip_special_tokens=True
         )
-        decoded_labels = self.tokenizer.batch_decode(
+        decoded_labels = self.processor.tokenizer.batch_decode(
             transcription_labels, skip_special_tokens=True
         )
         wer_score = wer(decoded_labels, decoded_preds)
         cer_score = cer(decoded_labels, decoded_preds)
 
-        # Intent metrics
-        intent_preds = np.argmax(intent_logits, axis=-1)
-        accuracy = (intent_preds == intent_labels).astype(np.float32).mean().item()
-
-        return {"wer": wer_score, "cer": cer_score, "intent_accuracy": accuracy}
+        return {"wer": wer_score, "cer": cer_score}
 
     def train(self):
         logger.info("Starting multi-task training...")
@@ -537,9 +552,12 @@ class TwiWhisperTrainer:
         # Set up generation config to fix evaluation error
         from transformers import GenerationConfig
 
-        model.generation_config = GenerationConfig.from_model_config(model.config)
+        if not hasattr(model, "generation_config") or model.generation_config is None:
+            model.generation_config = GenerationConfig.from_model_config(model.config)
         model.generation_config.forced_decoder_ids = None
         model.generation_config.suppress_tokens = []
+        model.generation_config.max_length = 448
+        model.generation_config.use_cache = True
 
         # Training arguments
         training_args = Seq2SeqTrainingArguments(
@@ -551,14 +569,14 @@ class TwiWhisperTrainer:
             warmup_steps=self.config.warmup_steps,
             num_train_epochs=self.config.num_epochs,
             eval_strategy="steps",
-            eval_steps=self.config.eval_steps,  # Disabled evaluation temporarily
+            eval_steps=self.config.eval_steps,
             save_strategy="steps",
-            save_steps=self.config.save_steps,  # Changed to save per epoch
+            save_steps=self.config.save_steps,
             logging_steps=self.config.logging_steps,
             report_to=self.config.report_to,
-            load_best_model_at_end=True,  # Disabled since no evaluation
-            # metric_for_best_model="wer",  # Disabled since no evaluation
-            greater_is_better=True,
+            load_best_model_at_end=True,
+            metric_for_best_model="wer",
+            greater_is_better=False,
             fp16=use_cuda,
             no_cuda=not use_cuda,
             predict_with_generate=True,
