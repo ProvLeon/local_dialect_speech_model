@@ -21,9 +21,13 @@ DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / "models/huggingface"
 LOGS_DIR = BASE_DIR / "logs"
 
-# Ensure directories exist
-for dir_path in [DATA_DIR, MODELS_DIR, LOGS_DIR]:
-    dir_path.mkdir(exist_ok=True)
+# Ensure directories exist with error handling
+try:
+    for dir_path in [DATA_DIR, MODELS_DIR, LOGS_DIR]:
+        dir_path.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    print(f"Warning: Could not create directory structure: {e}")
+    print("Model will be downloaded to temporary location if needed")
 
 
 class OptimizedConfig:

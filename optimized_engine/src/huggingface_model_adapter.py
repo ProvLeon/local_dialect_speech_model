@@ -249,19 +249,15 @@ class HuggingFaceModelAdapter:
                 logger.info("✅ Loaded separate intent classifier")
             else:
                 # Try to use the main model for classification
-                try:
-                    self.intent_classifier = pipeline(
-                        "text-classification",
-                        model=str(self.model_path),
-                        tokenizer=str(self.model_path),
-                        device=0 if self.device == "cuda" else -1,
-                    )
-                    logger.info("✅ Using main model for intent classification")
-                except Exception:
-                    logger.warning(
-                        "⚠️ Could not load intent classifier, will use fallback"
-                    )
-                    self.intent_classifier = None
+                # Don't try to use Whisper model for text classification
+                # Whisper models are for speech-to-text, not text classification
+                logger.info(
+                    "🎤 Main model is Whisper (speech-to-text), skipping text classification"
+                )
+                logger.info(
+                    "💡 For intent classification, train a separate text classifier or use fallback"
+                )
+                self.intent_classifier = None
 
         except Exception as e:
             logger.warning(f"⚠️ Intent classifier loading failed: {e}")
@@ -415,11 +411,12 @@ class HuggingFaceModelAdapter:
         self.stats["intent_requests"] += 1
 
         try:
-            if self.model_type == "single":
-                # Fallback to simple keyword-based classification for single-task models
-                return self._fallback_intent_classification(text)
-
-            if not self.intent_classifier:
+            # Always use fallback for single-task Whisper models
+            # Whisper models are designed for speech-to-text, not text classification
+            if self.model_type == "single" or not self.intent_classifier:
+                logger.info(
+                    f"🔤 Using fallback keyword-based intent classification for: '{text[:50]}...'"
+                )
                 return self._fallback_intent_classification(text)
 
             # Use trained intent classifier
@@ -452,6 +449,7 @@ class HuggingFaceModelAdapter:
 
     def _fallback_intent_classification(self, text: str) -> Dict[str, Any]:
         """Fallback intent classification using simple keyword matching."""
+        logger.debug(f"🔍 Running keyword matching for text: '{text}'")
 
         # Twi e-commerce intent keywords based on prompts_lean.csv
         intent_keywords = {
@@ -552,18 +550,27 @@ class HuggingFaceModelAdapter:
                 {"label": intent, "score": min(0.9, score)}  # Cap at 90%
                 for intent, score in sorted_intents[:5]
             ]
+            logger.info(
+                f"✅ Keyword match found: '{best_intent}' (confidence: {best_score:.2f})"
+            )
         else:
             best_intent = "search"  # Default fallback for unknown commands
             best_score = 0.1
             alternatives = [{"label": "search", "score": 0.1}]
+            logger.warning(
+                f"⚠️ No keyword matches found for '{text}', defaulting to 'search'"
+            )
 
-        return {
+        result = {
             "intent": best_intent,
             "confidence": min(0.8, best_score),  # Cap at 80% for fallback
             "alternatives": alternatives,
             "processing_time": 0.01,
             "method": "fallback_keywords",
         }
+
+        logger.debug(f"🎯 Fallback classification result: {result}")
+        return result
 
     def recognize(self, audio_path: str, language: str = None) -> Dict[str, Any]:
         """

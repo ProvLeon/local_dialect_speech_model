@@ -1,3 +1,24 @@
+---
+title: Twi Speech Recognition Engine
+emoji: 🎤
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: "4.20.0"
+app_file: app.py
+pinned: false
+license: mit
+short_description: Advanced Twi speech recognition with real-time AI
+tags:
+- speech-recognition
+- twi
+- whisper
+- african-languages
+- audio-processing
+- gradio
+- transformers
+---
+
 # Optimized Twi Speech Recognition Engine
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)

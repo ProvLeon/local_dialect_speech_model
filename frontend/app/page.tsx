@@ -21,11 +21,6 @@ import {
 } from "react";
 import {
   API_BASE_URL,
-  getHealth,
-  getModelInfo,
-  testIntent,
-  createLiveChunkUploader,
-
   formatConfidence,
   summarizeStreamingEvents,
   classifyConfidenceTier,
@@ -33,6 +28,16 @@ import {
   type StreamingIntentEvent,
   type ModelInfo,
 } from "../lib/api";
+import {
+  getHealth,
+  getModelInfo,
+  testIntent,
+  getConfigSummary,
+  createLiveChunkUploader,
+} from "../lib/api-wrapper";
+import ApiSettings from "../components/api-settings";
+import { ApiStatusBadge } from "../components/api-status";
+import DebugPanel from "../components/debug-panel";
 import {
   Mic,
   Square,
@@ -127,6 +132,10 @@ export default function Home() {
   /* -------------------------------- Effects -------------------------------- */
   useEffect(() => {
     (async () => {
+      // Log configuration on startup
+      const config = getConfigSummary();
+      console.log('🔧 Frontend Configuration:', config);
+
       try {
         const h = await getHealth();
         setHealth(h.status || "ok");
@@ -263,6 +272,19 @@ export default function Home() {
   /* ----------------------------- Recording Live ----------------------------- */
   async function startLiveRecording() {
     setError(null);
+
+    // Check if using Gradio mode - streaming not supported
+    const config = getConfigSummary();
+    if (config.mode === 'gradio-only') {
+      setError("Live streaming is not supported in Gradio mode. Please use file upload instead.");
+      addToast({
+        type: "error",
+        title: "Feature Not Available",
+        message: "Live streaming requires local API. Switch to local mode or use file upload.",
+      });
+      return;
+    }
+
     setStreamingMode("live");
     setStreamEvents([]);
     liveUploaderRef.current = createLiveChunkUploader({
@@ -275,7 +297,7 @@ export default function Home() {
         addToast({
           type: "error",
           title: "Live Upload Failed",
-          message: err.message,
+          message: err.message || "Streaming failed. Try switching to local API mode.",
         });
       },
     });
@@ -672,6 +694,7 @@ export default function Home() {
         onStartLive={startLiveRecording}
         onStopLive={stopLiveRecording}
         onStartChunk={startRecordThenChunk}
+        isGradioMode={getConfigSummary().mode === 'gradio-only'}
         onStopChunk={stopChunkRecording}
         error={error}
         onDismissError={() => setError(null)}
@@ -681,6 +704,8 @@ export default function Home() {
 
       <Footer />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <ApiSettings />
+      <DebugPanel />
     </div>
   );
 }
@@ -715,6 +740,7 @@ function Header({
             </span>
           </div>
         )}
+        <ApiStatusBadge />
       </div>
       <div className="flex items-center gap-3">
         <select
@@ -920,6 +946,7 @@ function InputBar({
   error,
   onDismissError,
   streamingSummary,
+  isGradioMode,
 }: {
   input: string;
   onInputChange: (v: string) => void;
@@ -940,6 +967,7 @@ function InputBar({
   onDismissError: () => void;
   topK: number;
   streamingSummary: ReturnType<typeof summarizeStreamingEvents> | null;
+  isGradioMode?: boolean;
 }) {
   return (
     <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)]/85 backdrop-blur px-5 py-4">
@@ -990,7 +1018,7 @@ function InputBar({
                 </div>
               )}
               {/* Live Streaming */}
-              {!isRecording && (
+              {!isRecording && !isGradioMode && (
                 <button
                   type="button"
                   onClick={onStartLive}
@@ -998,6 +1026,17 @@ function InputBar({
                 >
                   <Radio className="h-3.5 w-3.5" />
                   Live Stream
+                </button>
+              )}
+              {!isRecording && isGradioMode && (
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md bg-gray-300 text-gray-500 cursor-not-allowed shadow-sm"
+                  title="Live streaming not supported in Gradio mode"
+                >
+                  <Radio className="h-3.5 w-3.5" />
+                  Live Stream (Gradio N/A)
                 </button>
               )}
               {isRecording && streamingMode === "live" && (
@@ -1014,9 +1053,10 @@ function InputBar({
                 <button
                   onClick={onStartChunk}
                   className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md bg-[var(--color-info)] text-white hover:brightness-110 shadow-sm transition"
+                  title={isGradioMode ? "Record audio and send to Gradio for processing" : "Record audio and process with chunked streaming"}
                 >
                   <Headphones className="h-3.5 w-3.5" />
-                  Record & Chunk
+                  Record & Chunk {isGradioMode ? "(Gradio)" : ""}
                 </button>
               )}
               {isRecording && streamingMode === "chunk-file" && (

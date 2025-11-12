@@ -15,13 +15,16 @@
  *      * Structured error objects
  *      * Optional retry for idempotent GETs
  *  - File / Blob handling convenience (auto-FormData)
- *  - “Pseudo-streaming” helpers for chunked uploads to simulate ChatGPT‑like incremental UI
+ *  - "Pseudo-streaming" helpers for chunked uploads to simulate ChatGPT‑like incremental UI
  *  - Event-driven and async-iterator streaming abstractions
+ *  - Gradio client integration with automatic fallback
  *
  * IMPORTANT:
  *  If you introduce a proper streaming backend endpoint later (e.g. Server-Sent Events or WebSocket),
  *  you can extend this client by adding a specialized transport while keeping the same high-level interface.
  */
+
+import { isGradioEnabled, getGradioConfig, processAudioWithGradio, gradioClient } from './gradio-client';
 
 /* -------------------------------------------------------------------------- */
 /* Configuration & Types                                                      */
@@ -38,7 +41,9 @@ if (DEBUG_MODE) {
   console.log('🔧 API Configuration:', {
     API_BASE_URL,
     NODE_ENV: process.env.NODE_ENV,
-    DEBUG_MODE
+    DEBUG_MODE,
+    USE_GRADIO: isGradioEnabled(),
+    GRADIO_CONFIG: getGradioConfig()
   });
 }
 
@@ -320,12 +325,62 @@ export async function safeFetch<T = any>(
 /* -------------------------------------------------------------------------- */
 
 export async function getHealth(opts?: FetchOptions): Promise<HealthStatus> {
+  // If Gradio is enabled, try Gradio first
+  if (isGradioEnabled()) {
+    try {
+      if (DEBUG_MODE) {
+        console.log('🎭 Getting health status from Gradio...');
+      }
+
+      const gradioHealth = await gradioClient.getHealth();
+
+      if (DEBUG_MODE) {
+        console.log('✅ Gradio health check successful');
+      }
+
+      return gradioHealth;
+    } catch (gradioError) {
+      console.warn('⚠️ Gradio health check failed, falling back to local API:', gradioError);
+      // Continue to local API fallback
+    }
+  }
+
+  // Local API health check (original implementation)
+  if (DEBUG_MODE) {
+    console.log('🏥 Getting health status from local API...');
+  }
+
   const { data } = await safeFetch<HealthStatus>('/health', { retry: 2, ...opts });
   return data;
 }
 
 export async function getModelInfo(opts?: FetchOptions): Promise<ModelInfo | null> {
+  // If Gradio is enabled, try Gradio first
+  if (isGradioEnabled()) {
+    try {
+      if (DEBUG_MODE) {
+        console.log('🎭 Getting model info from Gradio...');
+      }
+
+      const gradioModelInfo = await gradioClient.getModelInfo();
+
+      if (DEBUG_MODE) {
+        console.log('✅ Gradio model info successful');
+      }
+
+      return gradioModelInfo;
+    } catch (gradioError) {
+      console.warn('⚠️ Gradio model info failed, falling back to local API:', gradioError);
+      // Continue to local API fallback
+    }
+  }
+
+  // Local API model info (original implementation)
   try {
+    if (DEBUG_MODE) {
+      console.log('📋 Getting model info from local API...');
+    }
+
     const { data } = await safeFetch<ModelInfo>('/model-info', { retry: 2, ...opts });
     return data;
   } catch {
@@ -336,6 +391,7 @@ export async function getModelInfo(opts?: FetchOptions): Promise<ModelInfo | nul
 
 /**
  * Test intent recognition with a file / blob / FormData.
+ * Supports both Gradio and local API with automatic fallback.
  *
  * @param input - File | Blob | FormData
  * @param topK   - Top predictions to request
@@ -345,6 +401,44 @@ export async function testIntent(
   topK = 5,
   opts?: FetchOptions
 ): Promise<IntentResult> {
+  // If Gradio is enabled, try Gradio first
+  if (isGradioEnabled()) {
+    try {
+      if (DEBUG_MODE) {
+        console.log('🎭 Attempting Gradio processing first...');
+      }
+
+      // Convert FormData to Blob if needed
+      let audioBlob: Blob | File;
+      if (input instanceof FormData) {
+        const fileEntry = input.get('file');
+        if (fileEntry instanceof File || fileEntry instanceof Blob) {
+          audioBlob = fileEntry;
+        } else {
+          throw new Error('Invalid FormData: no file found');
+        }
+      } else {
+        audioBlob = input;
+      }
+
+      const gradioResult = await processAudioWithGradio(audioBlob, {
+        timeoutMs: opts?.timeoutMs || 120000,
+        retries: 2
+      });
+
+      if (DEBUG_MODE) {
+        console.log('✅ Gradio processing successful');
+      }
+
+      return gradioResult;
+    } catch (gradioError) {
+      console.warn('⚠️ Gradio processing failed, falling back to local API:', gradioError);
+
+      // Continue to local API fallback
+    }
+  }
+
+  // Local API processing (original implementation)
   let fd: FormData;
 
   if (input instanceof FormData) {
@@ -355,11 +449,12 @@ export async function testIntent(
     fd.append('file', input, filename);
 
     if (DEBUG_MODE) {
-      console.log('🎤 Preparing intent test:', {
+      console.log('🎤 Preparing local API intent test:', {
         fileSize: input.size,
         fileType: input.type,
         filename,
-        topK
+        topK,
+        usingGradio: false
       });
     }
   }
@@ -376,7 +471,7 @@ export async function testIntent(
     });
 
     if (DEBUG_MODE) {
-      console.log('🎯 Intent result:', {
+      console.log('🎯 Local API result:', {
         intent: data.intent,
         confidence: data.confidence,
         predictions: data.top_predictions?.length || 0
@@ -385,13 +480,13 @@ export async function testIntent(
 
     return data;
   } catch (error) {
-    console.error('💥 Intent test failed:', {
+    console.error('💥 Intent test failed (local API):', {
       url: `${API_BASE_URL}${url}`,
       error: error instanceof ApiError ? {
         status: error.status,
         message: error.message,
         data: error.data
-      } : error?.toString()
+      } : String(error)
     });
     throw error;
   }
