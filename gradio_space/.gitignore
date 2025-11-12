@@ -1,0 +1,100 @@
+# Large model files and data directories
+models/
+local_models/
+data/
+logs/
+test_output/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Audio test files (except examples)
+*.wav
+!addr_add_1.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+
+# Environment and IDE
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Documentation and markdown files (except README)
+*.md
+!README.md
+
+# Large dependency caches
+.cache/
+.pytest_cache/
+
+# Training artifacts
+checkpoints/
+runs/
+wandb/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Large archives and compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Memory dumps and profiles
+*.prof
+*.hprof
+memory_profiler_*.dat
+
+# Shell scripts and utilities (keep only essential ones)
+*.sh
+!setup.sh
+!run.sh
+
+# Test files
+test_*.py
+*_test.py
+tests/
