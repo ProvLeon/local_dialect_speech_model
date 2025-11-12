@@ -2,6 +2,8 @@ import os
 import sys
 from pathlib import Path
 
+from src.speech_recognizer import create_speech_recognizer
+
 # Check PyTorch availability first
 try:
     import torch
@@ -30,7 +32,6 @@ current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir / "src"))
 sys.path.insert(0, str(current_dir))
 
-from src.speech_recognizer import create_speech_recognizer
 
 # --- Configuration ---
 # It's recommended to use a specific model from the Hub.
@@ -199,7 +200,7 @@ The model is based on OpenAI's Whisper and a custom intent classifier.
 article = """
 <div style='text-align: center;'>
     <p>Model based on <a href='https://huggingface.co/openai/whisper-large-v3' target='_blank'>Whisper</a> and fine-tuned for Twi.</p>
-    <p>Developed by an AI Assistant.</p>
+    <p>Developed by Orlixis LTD.</p>
 </div>
 """
 
@@ -227,4 +228,29 @@ if __name__ == "__main__":
     print(
         "Launching Gradio interface... The API will be available at the /api endpoint."
     )
-    iface.launch()
+
+    # Check if running on HuggingFace Spaces
+    is_hf_space = os.getenv("SPACE_ID") is not None
+    space_id = os.getenv("SPACE_ID", "unknown")
+
+    # Debug environment info
+    print("🔍 Environment Detection:")
+    print(f"   - SPACE_ID: {space_id}")
+    print(f"   - Is HF Space: {is_hf_space}")
+    print(f"   - Model Repo: {HUGGINGFACE_REPO}")
+
+    if is_hf_space:
+        print(f"🚀 Running on HuggingFace Spaces: {space_id}")
+        print(f"🌐 Public URL: https://huggingface.co/spaces/{space_id}")
+        iface.launch(
+            server_name="0.0.0.0",
+            server_port=7860,
+            share=True,  # Not needed on HF Spaces - already public
+        )
+    else:
+        print("💻 Running locally - creating public share link for development")
+        iface.launch(
+            share=True,  # Create public ngrok link for local development
+            server_name="0.0.0.0",
+            server_port=7860,
+        )

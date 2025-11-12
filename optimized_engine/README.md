@@ -1,6 +1,5 @@
 ---
 title: Twi Speech Recognition Engine
-emoji: 🎤
 colorFrom: blue
 colorTo: green
 sdk: gradio
